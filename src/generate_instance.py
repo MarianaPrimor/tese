@@ -388,6 +388,117 @@ def _generate_synthetic_demand(refs, n_days, n_orders=15, seed=42):
         demand.append(order)
 
     return demand
+def _normalize_key(value):
+    """
+    Normalizes names to create safe dictionary keys.
+    Example: 'Máquina de Corte' -> 'maquina_de_corte'
+    """
+    if value is None:
+        return None
+
+    text = str(value).strip().lower()
+
+    replacements = {
+        "á": "a", "à": "a", "ã": "a", "â": "a",
+        "é": "e", "ê": "e",
+        "í": "i",
+        "ó": "o", "ô": "o", "õ": "o",
+        "ú": "u",
+        "ç": "c",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    text = text.replace("/", "_")
+    text = text.replace("-", "_")
+    text = text.replace(" ", "_")
+
+    while "__" in text:
+        text = text.replace("__", "_")
+
+    return text
+
+
+def _read_machines_sheet(ws):
+    """
+    Reads sheet 10_MÁQUINAS.
+
+    Returns:
+    - machines: available quantity of each machine/resource
+    - ref_machine_requirements: machine requirements by reference
+    """
+
+    machines = {}
+    ref_machine_requirements = {}
+
+    # ========================================================
+    # 1) READ AVAILABLE MACHINES
+    # Table A:D
+    # Col 1 = machine name
+    # Col 2 = total quantity
+    # Col 3 = section
+    # ========================================================
+
+    for row in ws.iter_rows(min_row=4, max_row=ws.max_row, values_only=True):
+        machine_name = row[1]
+        quantity = _safe_int(row[2], default=None)
+        section = _safe_text(row[3], default=None)
+
+        if machine_name is None or quantity is None:
+            continue
+
+        machine_id = _normalize_key(machine_name)
+
+        machines[machine_id] = {
+            "name": str(machine_name).strip(),
+            "quantity": quantity,
+            "section": section,
+        }
+
+    # ========================================================
+    # 2) READ MACHINE REQUIREMENTS BY REFERENCE
+    # Table F:X
+    # Col 5 = product name
+    # Col 6 = ref_id
+    # Col 7 onwards = machine consumption
+    # ========================================================
+
+    header = list(ws.iter_rows(min_row=3, max_row=3, values_only=True))[0]
+
+    # Machine columns start at index 7
+    # In your sheet they go from H to X
+    machine_columns = []
+
+    for col_idx in range(7, 24):
+        machine_name = header[col_idx]
+
+        if machine_name is None:
+            continue
+
+        machine_id = _normalize_key(machine_name)
+
+        machine_columns.append((col_idx, machine_id))
+
+    for row in ws.iter_rows(min_row=4, max_row=ws.max_row, values_only=True):
+        ref_id = row[6]
+
+        if ref_id is None:
+            continue
+
+        ref_id = str(ref_id).strip()
+
+        requirements = {}
+
+        for col_idx, machine_id in machine_columns:
+            quantity_needed = _safe_int(row[col_idx], default=0)
+
+            if quantity_needed > 0:
+                requirements[machine_id] = quantity_needed
+
+        ref_machine_requirements[ref_id] = requirements
+
+    return machines, ref_machine_requirements
 
 
 def load_real_instance(
@@ -410,6 +521,15 @@ def load_real_instance(
         wb["3_SETUPS"],
         families
     )
+    if "10_MÁQUINAS" in wb.sheetnames:
+        machines, ref_machine_requirements = _read_machines_sheet(
+            wb["10_MÁQUINAS"]
+        )
+        machines_source = "Excel sheet 10_MÁQUINAS"
+    else:
+        machines = {}
+        ref_machine_requirements = {}
+        machines_source = "not available"
 
     if "6_PROCURA" in wb.sheetnames:
         demand = _read_demand_sheet(wb["6_PROCURA"])
@@ -452,6 +572,8 @@ def load_real_instance(
         "operators": operators,
         "competencies": competencies,
         "demand": demand,
+        "machines": machines,
+        "ref_machine_requirements": ref_machine_requirements,
         "structure": structure,
 
         "_meta": {
@@ -461,6 +583,9 @@ def load_real_instance(
             "n_families": len(families),
             "n_setups_estimated": n_setups_estimated,
             "demand_source": demand_source,
+            "machines_source": machines_source,
+            "n_machines": len(machines),
+            "n_refs_with_machine_requirements": len(ref_machine_requirements),
         }
     }
 
@@ -538,6 +663,24 @@ def print_instance_summary(instance):
         day_names = ["mon", "tue", "wed", "thu", "fri"][:instance["n_days"]]
 
         print(f"  Available per day: {dict(zip(day_names, available_per_day))}")
+    
+        print("\nMACHINES / CRITICAL RESOURCES")
+    print(f"  Total machines/resources: {meta['n_machines']}")
+    print(f"  Source: {meta['machines_source']}")
+    print(
+        f"  References with machine requirements: "
+        f"{meta['n_refs_with_machine_requirements']}"
+    )
+
+    if instance["machines"]:
+        print("  First machines:")
+
+        for machine_id, data in list(instance["machines"].items())[:10]:
+            print(
+                f"    {machine_id}: "
+                f"{data['quantity']} available "
+                f"({data['section']})"
+            )
 
     print("\nDEMAND")
     print(f"  Orders: {len(instance['demand'])} ({meta['demand_source']})")
@@ -555,5 +698,5 @@ def print_instance_summary(instance):
 
 
 if __name__ == "__main__":
-    instance = load_real_instance(excel_path="Inputs_Doceleia.xlsx")
+    instance = load_real_instance(excel_path="../Inputs_Doceleia.xlsx")
     print_instance_summary(instance)
