@@ -1,0 +1,559 @@
+import random
+import openpyxl
+from datetime import datetime, date
+
+
+LINE_GROSS_CAPACITY_MIN = 480
+END_OF_DAY_CLEANING_TIME_MIN = 30
+CLEANING_OPERATORS = 5
+
+LINE_AVAILABLE_CAPACITY_MIN = (
+    LINE_GROSS_CAPACITY_MIN - END_OF_DAY_CLEANING_TIME_MIN
+)
+
+
+def calculate_production_time(n_boxes, cakes_per_box, cakes_per_hour_rate):
+    if cakes_per_hour_rate is None or cakes_per_hour_rate == 0:
+        return None
+
+    n_cakes = n_boxes * cakes_per_box
+    time_hours = n_cakes / cakes_per_hour_rate
+    return time_hours * 60
+
+
+def _safe_int(value, default=None):
+    if value is None:
+        return default
+
+    if isinstance(value, str) and value.strip() in ["", "-"]:
+        return default
+
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float(value, default=None):
+    if value is None:
+        return default
+
+    if isinstance(value, str) and value.strip() in ["", "-"]:
+        return default
+
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_text(value, default=None):
+    if value is None:
+        return default
+
+    if isinstance(value, str) and value.strip() == "":
+        return default
+
+    return str(value).strip()
+
+
+def _safe_time(value, default=None):
+    if value is None:
+        return default
+
+    return value
+
+
+def _is_yes(value):
+    if value is None:
+        return False
+
+    val = str(value).strip().lower()
+    return val == "yes" or val == "sim"
+
+
+def _positive_value(value):
+    return isinstance(value, (int, float)) and value > 0
+
+
+def _read_references_sheet(ws):
+    refs = []
+    incomplete_refs = []
+
+    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
+        if row[0] is None:
+            continue
+
+        ref_id = str(row[0]).strip()
+        name = str(row[1]).strip() if row[1] else ref_id
+        cakes_per_box = _safe_int(row[2], default=1)
+        family = str(row[3]).strip().lower() if row[3] else "no_family"
+
+        can_L1 = _is_yes(row[9])
+        rate_L1_prod = _safe_float(row[10])
+        ops_L1_finish = _safe_int(row[11])
+        ops_L1_prod = _safe_int(row[12])
+
+        if can_L1:
+            if rate_L1_prod is None:
+                incomplete_refs.append((ref_id, "can_L1=Yes but no L1 rate"))
+            if ops_L1_prod is None:
+                incomplete_refs.append((ref_id, "can_L1=Yes but no production operators L1"))
+            if ops_L1_finish is None:
+                incomplete_refs.append((ref_id, "can_L1=Yes but no finishing operators L1"))
+        else:
+            rate_L1_prod = 0
+            ops_L1_prod = 0
+            ops_L1_finish = 0
+
+        can_L2 = _is_yes(row[13])
+        rate_L2_prod = _safe_float(row[14])
+        rate_L2_finish = _safe_float(row[15])
+        ops_L2_finish = _safe_int(row[16])
+        ops_L2_prod = _safe_int(row[17])
+
+        if can_L2:
+            if rate_L2_prod is None:
+                incomplete_refs.append((ref_id, "can_L2=Yes but no production rate L2"))
+            if rate_L2_finish is None:
+                incomplete_refs.append((ref_id, "can_L2=Yes but no finishing rate L2"))
+            if ops_L2_prod is None:
+                incomplete_refs.append((ref_id, "can_L2=Yes but no production operators L2"))
+            if ops_L2_finish is None:
+                incomplete_refs.append((ref_id, "can_L2=Yes but no finishing operators L2"))
+        else:
+            rate_L2_prod = 0
+            rate_L2_finish = 0
+            ops_L2_prod = 0
+            ops_L2_finish = 0
+
+        ref = {
+            "id": ref_id,
+            "name": name,
+            "family": family,
+            "cakes_per_box": cakes_per_box,
+            "lead_time_L0_days": _safe_int(row[8], default=1),
+
+            "can_L1": can_L1,
+            "rate_L1_prod": rate_L1_prod,
+            "rate_L1_finish": rate_L1_prod,
+            "ops_L1_prod": ops_L1_prod,
+            "ops_L1_finish": ops_L1_finish,
+
+            "can_L2": can_L2,
+            "rate_L2_prod": rate_L2_prod,
+            "rate_L2_finish": rate_L2_finish,
+            "ops_L2_prod": ops_L2_prod,
+            "ops_L2_finish": ops_L2_finish,
+        }
+
+        refs.append(ref)
+
+    return refs, incomplete_refs
+
+
+def _read_structure_sheet(ws):
+    structure = {
+        "n_days": 5,
+        "line_capacity_min": LINE_GROSS_CAPACITY_MIN,
+        "end_of_day_cleaning_time_min": END_OF_DAY_CLEANING_TIME_MIN,
+        "cleaning_operators": CLEANING_OPERATORS,
+        "capacity_L0_min": None,
+        "lead_time_standard_L0_L1L2_days": None,
+        "start_time_L0": None,
+        "end_time_L0": None,
+        "n_ovens": None,
+        "ovens_capacity_min": None,
+        "start_time_L1_prod": None,
+        "end_time_L1_prod": None,
+        "capacity_L1_prod_min": None,
+        "start_time_L1_finish": None,
+        "end_time_L1_finish": None,
+        "capacity_L1_finish_min": None,
+        "tunnel_time_L1_min": None,
+        "start_time_L2_prod": None,
+        "end_time_L2_prod": None,
+        "capacity_L2_prod_min": None,
+        "start_time_L2_finish": None,
+        "end_time_L2_finish": None,
+        "capacity_L2_finish_min": None,
+        "nitrogen_time_L2_min": None,
+        "n_productive_operators": None,
+        "n_operators": None,
+        "operators_rotate_L0_L1_L2": None,
+        "_extra": {},
+    }
+
+    param_to_key = {
+        "number of working days": ("n_days", "int"),
+        "working days": ("n_days", "int"),
+        "effective capacity of l0 per day (minutes)": ("capacity_L0_min", "int"),
+        "standard lead time l0 → l1/l2 (days)": ("lead_time_standard_L0_L1L2_days", "int"),
+        "start time of l0": ("start_time_L0", "time"),
+        "end time of l0": ("end_time_L0", "time"),
+        "number of available ovens": ("n_ovens", "int"),
+        "effective capacity per oven per day (minutes)": ("ovens_capacity_min", "int"),
+        "start time l1 production": ("start_time_L1_prod", "time"),
+        "end time l1 production": ("end_time_L1_prod", "time"),
+        "effective capacity l1 production (minutes)": ("capacity_L1_prod_min", "int"),
+        "start time l1 finishing/packaging": ("start_time_L1_finish", "time"),
+        "end time l1 finishing/packaging": ("end_time_L1_finish", "time"),
+        "effective capacity l1 finishing/packaging (minutes)": ("capacity_L1_finish_min", "int"),
+        "time of cooling tunnel l1 (minutes)": ("tunnel_time_L1_min", "int"),
+        "start time l2 production": ("start_time_L2_prod", "time"),
+        "end time l2 production": ("end_time_L2_prod", "time"),
+        "effective capacity l2 production (minutes)": ("capacity_L2_prod_min", "int"),
+        "start time l2 finishing/packaging": ("start_time_L2_finish", "time"),
+        "end time l2 finishing/packaging": ("end_time_L2_finish", "time"),
+        "effective capacity l2 finishing/packaging (minutes)": ("capacity_L2_finish_min", "int"),
+        "time of nitrogen chamber l2 (minutes)": ("nitrogen_time_L2_min", "int"),
+        "total number of productive operators": ("n_productive_operators", "int"),
+        "total number of operators": ("n_operators", "int"),
+        "do operators rotate between l0/l1/l2?": ("operators_rotate_L0_L1_L2", "bool"),
+    }
+
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, values_only=True):
+        if row[0] is None:
+            continue
+
+        param = str(row[0]).strip().lower()
+        value = row[1]
+
+        mapping = param_to_key.get(param)
+
+        if mapping is not None:
+            key, type_ = mapping
+
+            if type_ == "int":
+                structure[key] = _safe_int(value, default=structure[key])
+            elif type_ == "bool":
+                structure[key] = _is_yes(value)
+            elif type_ == "time":
+                structure[key] = _safe_time(value, default=structure[key])
+            else:
+                structure[key] = _safe_text(value, default=structure[key])
+
+        elif value is not None:
+            structure["_extra"][param] = value
+
+    return structure
+
+
+def _read_operators_sheet(ws):
+    operators = []
+
+    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
+        if row[0] is None:
+            continue
+
+        in_pool = _is_yes(row[2])
+
+        if not in_pool:
+            continue
+
+        availability = [
+            _safe_int(row[3 + i], default=0)
+            for i in range(5)
+        ]
+
+        operators.append({
+            "id": str(row[0]).strip(),
+            "name": str(row[1]).strip() if row[1] else str(row[0]).strip(),
+            "availability": availability,
+        })
+
+    return operators
+
+
+def _read_competencies_sheet(ws):
+    competencies = {}
+
+    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
+        if row[0] is None:
+            continue
+
+        op_id = str(row[0]).strip()
+
+        competencies[op_id] = {
+            "L0": str(row[2]).strip() if row[2] else "-",
+            "L1": str(row[3]).strip() if row[3] else "-",
+            "L2": str(row[4]).strip() if row[4] else "-",
+        }
+
+    return competencies
+
+
+def _read_setups_sheet(ws, all_families):
+    matrix = {}
+
+    header = list(ws.iter_rows(min_row=4, max_row=4, values_only=True))[0]
+
+    column_families = [
+        str(c).strip().lower() if c else None
+        for c in header[1:]
+    ]
+
+    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
+        if row[0] is None:
+            continue
+
+        from_family = str(row[0]).strip().lower()
+
+        for j, to_family in enumerate(column_families):
+            if to_family is None:
+                continue
+
+            value = row[j + 1] if j + 1 < len(row) else None
+
+            if isinstance(value, (int, float)):
+                matrix[(from_family, to_family)] = float(value)
+
+    DEFAULT_SETUP = 30
+    SAME_FAMILY_SETUP = 5
+    n_estimated = 0
+
+    for f1 in all_families:
+        for f2 in all_families:
+            if (f1, f2) not in matrix:
+                matrix[(f1, f2)] = SAME_FAMILY_SETUP if f1 == f2 else DEFAULT_SETUP
+                n_estimated += 1
+
+    return matrix, n_estimated
+
+
+def _read_demand_sheet(ws, start_date=None):
+    demand = []
+
+    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
+        if row[0] is None:
+            continue
+
+        delivery_value = row[2]
+
+        if isinstance(delivery_value, (datetime, date)):
+            if start_date:
+                if isinstance(start_date, datetime):
+                    start_date = start_date.date()
+
+                if isinstance(delivery_value, datetime):
+                    delivery_value = delivery_value.date()
+
+                delta = delivery_value - start_date
+                delivery_date = delta.days + 1
+            else:
+                delivery_date = 1
+        else:
+            delivery_date = _safe_int(delivery_value, default=1)
+
+        order = {
+            "ref_id": str(row[0]).strip(),
+            "master_boxes": _safe_int(row[1], default=0),
+            "delivery_date": delivery_date,
+            "priority": _safe_text(row[3], default="Medium"),
+        }
+
+        demand.append(order)
+
+    return demand
+
+
+def _generate_synthetic_demand(refs, n_days, n_orders=15, seed=42):
+    random.seed(seed)
+
+    valid_refs = [
+        r for r in refs
+        if (
+            r["can_L1"] and _positive_value(r["rate_L1_prod"])
+        ) or (
+            r["can_L2"] and _positive_value(r["rate_L2_prod"])
+        )
+    ]
+
+    if not valid_refs:
+        print("⚠️ No valid references found to generate synthetic demand.")
+        return []
+
+    demand = []
+
+    for _ in range(n_orders):
+        ref = random.choice(valid_refs)
+
+        order = {
+            "ref_id": ref["id"],
+            "master_boxes": random.choice([100, 150, 200, 300, 500]),
+            "delivery_date": random.randint(2, n_days),
+            "priority": random.choice(["High", "Medium", "Low"]),
+        }
+
+        demand.append(order)
+
+    return demand
+
+
+def load_real_instance(
+    excel_path="Inputs_Doceleia.xlsx",
+    n_synthetic_orders=15,
+    seed=42
+):
+    print(f"Loading instance from {excel_path}...")
+
+    wb = openpyxl.load_workbook(excel_path, data_only=True)
+
+    structure = _read_structure_sheet(wb["1_ESTRUTURA"])
+    refs, incomplete_refs = _read_references_sheet(wb["2_REFERENCIAS"])
+    operators = _read_operators_sheet(wb["4_OPERADORES"])
+    competencies = _read_competencies_sheet(wb["5_COMPETENCIAS"])
+
+    families = sorted(set(r["family"] for r in refs))
+
+    setups_matrix, n_setups_estimated = _read_setups_sheet(
+        wb["3_SETUPS"],
+        families
+    )
+
+    if "6_PROCURA" in wb.sheetnames:
+        demand = _read_demand_sheet(wb["6_PROCURA"])
+
+        if demand:
+            demand_source = "Excel sheet 6_PROCURA"
+        else:
+            demand = _generate_synthetic_demand(
+                refs,
+                structure["n_days"],
+                n_orders=n_synthetic_orders,
+                seed=seed
+            )
+            demand_source = "synthetic because 6_PROCURA is empty"
+    else:
+        demand = _generate_synthetic_demand(
+            refs,
+            structure["n_days"],
+            n_orders=n_synthetic_orders,
+            seed=seed
+        )
+        demand_source = "synthetic because 6_PROCURA does not exist"
+
+    instance = {
+        "n_days": structure["n_days"],
+        "final_lines": ["L1", "L2"],
+        "days": [f"day_{i + 1}" for i in range(structure["n_days"])],
+        "line_capacity_min": structure["line_capacity_min"],
+        "end_of_day_cleaning_time_min": structure["end_of_day_cleaning_time_min"],
+        "cleaning_operators": structure["cleaning_operators"],
+
+        "available_line_time_min": (
+            structure["line_capacity_min"]
+            - structure["end_of_day_cleaning_time_min"]
+        ),
+
+        "refs": refs,
+        "families": families,
+        "setups_matrix": setups_matrix,
+        "operators": operators,
+        "competencies": competencies,
+        "demand": demand,
+        "structure": structure,
+
+        "_meta": {
+            "n_refs_total": len(refs),
+            "n_incomplete_refs": len(incomplete_refs),
+            "incomplete_refs": incomplete_refs,
+            "n_families": len(families),
+            "n_setups_estimated": n_setups_estimated,
+            "demand_source": demand_source,
+        }
+    }
+
+    return instance
+
+
+def print_instance_summary(instance):
+    meta = instance["_meta"]
+
+    print("=" * 70)
+    print("LOADED INSTANCE — SUMMARY")
+    print("=" * 70)
+
+    print("\nSTRUCTURE")
+    print(f"  Horizon: {instance['n_days']} working days")
+    print(f"  Gross capacity Line 1/Line 2: {instance['line_capacity_min']} min/day")
+    print(
+        f"  End of day cleaning: {instance['end_of_day_cleaning_time_min']} min "
+        f"({instance['cleaning_operators']} operators)"
+    )
+    print(
+        f"  Available for production: "
+        f"{instance['available_line_time_min']} min/day"
+    )
+
+    print("\nREFERENCES")
+    print(f"  Total: {meta['n_refs_total']}")
+
+    n_can_L1 = sum(1 for r in instance["refs"] if r["can_L1"])
+    n_can_L2 = sum(1 for r in instance["refs"] if r["can_L2"])
+    n_only_L1 = sum(1 for r in instance["refs"] if r["can_L1"] and not r["can_L2"])
+    n_only_L2 = sum(1 for r in instance["refs"] if r["can_L2"] and not r["can_L1"])
+    n_both = sum(1 for r in instance["refs"] if r["can_L1"] and r["can_L2"])
+
+    print(f"    Can L1: {n_can_L1} (only L1: {n_only_L1})")
+    print(f"    Can L2: {n_can_L2} (only L2: {n_only_L2})")
+    print(f"    Can both: {n_both}")
+
+    if meta["n_incomplete_refs"] > 0:
+        print(f"  ⚠️  Incomplete refs: {meta['n_incomplete_refs']}")
+
+        for ref_id, reason in meta["incomplete_refs"][:15]:
+            print(f"      - {ref_id}: {reason}")
+
+        if meta["n_incomplete_refs"] > 15:
+            print("      ...")
+
+    print("\nFAMILIES")
+    print(f"  Total: {meta['n_families']}")
+    print(
+        f"  List: {', '.join(instance['families'][:10])}"
+        f"{'...' if len(instance['families']) > 10 else ''}"
+    )
+
+    print("\nSETUPS")
+    n_total_setups = len(instance["setups_matrix"])
+    n_real = n_total_setups - meta["n_setups_estimated"]
+
+    print(
+        f"  Matrix: {meta['n_families']}×{meta['n_families']} "
+        f"= {n_total_setups} values"
+    )
+    print(f"  Filled in Excel: {n_real}")
+    print(f"  ⚠️  Estimated (default value): {meta['n_setups_estimated']}")
+
+    print("\nOPERATORS (in shared pool)")
+    print(f"  Total: {len(instance['operators'])}")
+
+    if instance["operators"]:
+        available_per_day = [
+            sum(op["availability"][d] for op in instance["operators"])
+            for d in range(instance["n_days"])
+        ]
+
+        day_names = ["mon", "tue", "wed", "thu", "fri"][:instance["n_days"]]
+
+        print(f"  Available per day: {dict(zip(day_names, available_per_day))}")
+
+    print("\nDEMAND")
+    print(f"  Orders: {len(instance['demand'])} ({meta['demand_source']})")
+
+    if instance["demand"]:
+        print("  First 5 orders:")
+
+        for o in instance["demand"][:5]:
+            print(
+                f"    {o['ref_id']}: {o['master_boxes']} master boxes, "
+                f"delivery {o['delivery_date']}, priority {o['priority']}"
+            )
+
+    print()
+
+
+if __name__ == "__main__":
+    instance = load_real_instance(excel_path="Inputs_Doceleia.xlsx")
+    print_instance_summary(instance)
