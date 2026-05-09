@@ -1,0 +1,1 @@
+population = generate_initial_population(instance, population_size=100)
