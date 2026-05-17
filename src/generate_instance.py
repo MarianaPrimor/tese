@@ -302,7 +302,7 @@ def _read_structure_sheet(ws):
         "end time l2 production": ("end_time_L2_prod", "time"),
         "effective capacity l2 production (minutes)": ("capacity_L2_prod_min", "int"),
         "start time l2 finishing/packaging": ("start_time_L2_finish", "time"),
-        "end time l2 finishing/packaging": ("end_time_L2_finish", "time"),
+        "end time l2 finishing/packaging": ("end_ time_L2_finish", "time"),
         "effective capacity l2 finishing/packaging (minutes)": ("capacity_L2_finish_min", "int"),
         "time of nitrogen chamber l2 (minutes)": ("nitrogen_time_L2_min", "int"),
         "total number of productive operators": ("n_productive_operators", "int"),
@@ -435,30 +435,9 @@ def _canonical_family(value, family_aliases):
     return family_aliases.get(key, text)
 
 
-def _read_family_display_names_sheet(ws, all_families):
-    display_by_family = {
-        family: family
-        for family in all_families
-    }
-
-    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
-        family_name = _safe_text(row[20] if len(row) > 20 else None)
-        family_code = _safe_text(row[21] if len(row) > 21 else None)
-
-        if family_name and family_code:
-            family_name = family_name.lower()
-            display_by_family[family_name] = family_code
-
-    return [
-        display_by_family.get(family, family)
-        for family in all_families
-    ]
-
-
 def _read_setups_sheet(ws, all_families, family_aliases=None):
     matrix = {}
     family_aliases = family_aliases or {}
-    valid_families = set(all_families)
 
     for family in all_families:
         family_aliases[_normalize_label(family)] = family
@@ -478,9 +457,6 @@ def _read_setups_sheet(ws, all_families, family_aliases=None):
 
         for j, to_family in enumerate(column_families):
             if from_family is None or to_family is None:
-                continue
-
-            if from_family not in valid_families or to_family not in valid_families:
                 continue
 
             value = row[j + 1] if j + 1 < len(row) else None
@@ -760,10 +736,6 @@ def load_real_instance(
 
     families = sorted(set(r["family"] for r in refs))
     family_aliases = _read_family_aliases_sheet(wb["2_REFERENCIAS"])
-    family_display_names = _read_family_display_names_sheet(
-        wb["2_REFERENCIAS"],
-        families
-    )
 
     setups_matrix, n_setups_estimated = _read_setups_sheet(
         wb["3_SETUPS"],
@@ -836,7 +808,6 @@ def load_real_instance(
 
         "refs": refs,
         "families": families,
-        "family_display_names": family_display_names,
         "setups_matrix": setups_matrix,
         "operators": operators,
         "competencies": competencies,
@@ -911,14 +882,9 @@ def print_instance_summary(instance):
 
     print("\nFAMILIES")
     print(f"  Total: {meta['n_families']}")
-    family_display_names = instance.get(
-        "family_display_names",
-        instance["families"]
-    )
-
     print(
-        f"  List: {', '.join(family_display_names[:10])}"
-        f"{'...' if len(family_display_names) > 10 else ''}"
+        f"  List: {', '.join(instance['families'][:10])}"
+        f"{'...' if len(instance['families']) > 10 else ''}"
     )
 
     print("\nSETUPS")
