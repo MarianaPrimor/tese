@@ -86,6 +86,8 @@ def generate_random_solution(instance, seed=42):
             "ref_id": ref_id,
             "master_boxes": order["master_boxes"],
             "delivery_date": order["delivery_date"],
+            "delivery_calendar_date": order.get("delivery_calendar_date"),
+            "adjusted_delivery_date": order.get("adjusted_delivery_date"),
             "priority": order["priority"],
             "day": day,
             "line": line,

@@ -1,153 +1,135 @@
 import streamlit as st
 import pandas as pd
 
+from generate_instance import load_real_instance
+from geneticalgorithm import run_genetic_algorithm
+
+def format_date(value):
+    if value is None:
+        return ""
+
+    if hasattr(value, "strftime"):
+        return value.strftime("%d/%m/%Y")
+
+    return str(value)
+
+
+def get_production_date(instance, day):
+    working_days = instance.get("working_days", [])
+
+    if working_days and 1 <= day <= len(working_days):
+        return format_date(working_days[day - 1])
+
+    return f"Day {day}"
+
+
 st.set_page_config(
-    page_title="Production Planning Dashboard",
+    page_title="Production Sequencing Dashboard",
     layout="wide"
 )
 
-st.title("Production Planning Dashboard — Mock-up")
+st.title("Production Sequencing Dashboard")
 
-st.markdown(
-    "This is a visual mock-up of how the final decision-support tool may look."
+excel_path = st.text_input(
+    "Excel file path",
+    "../Inputs_Doceleia.xlsx"
 )
 
-# ============================================================
-# FAKE KPI DATA
-# ============================================================
-
-col1, col2, col3, col4, col5 = st.columns(5)
-
-col1.metric("Total Orders", 28)
-col2.metric("Planning Days", 5)
-col3.metric("Lines", "L1 / L2")
-col4.metric("Operator Violations", 2)
-col5.metric("Capacity Violations", 3)
-
-st.divider()
-
-# ============================================================
-# FAKE PLAN DATA
-# ============================================================
-
-data = [
-    ["Day 1", "L1", "DC035072", 100, 240, 8, "High"],
-    ["Day 1", "L1", "DC118826", 300, 360, 10, "Medium"],
-    ["Day 1", "L2", "DC028072", 500, 420, 12, "Low"],
-    ["Day 2", "L1", "DC125621", 150, 180, 7, "Low"],
-    ["Day 2", "L2", "DC226083", 500, 390, 11, "High"],
-    ["Day 3", "L1", "DC024072N", 100, 90, 5, "Medium"],
-    ["Day 4", "L2", "DC117001", 300, 300, 9, "Medium"],
-    ["Day 5", "L1", "DC436621", 500, 450, 13, "High"],
-]
-
-df = pd.DataFrame(
-    data,
-    columns=[
-        "Day",
-        "Line",
-        "Order",
-        "Master Boxes",
-        "Production Time (min)",
-        "Operators Required",
-        "Priority"
-    ]
+population_size = st.number_input(
+    "Population size",
+    min_value=10,
+    max_value=500,
+    value=100,
+    step=10
 )
 
-st.subheader("Production Plan Overview")
-
-st.dataframe(df, use_container_width=True)
-
-st.divider()
-
-# ============================================================
-# PLAN BY DAY AND LINE
-# ============================================================
-
-st.subheader("Allocation by Day and Line")
-
-days = df["Day"].unique()
-
-for day in days:
-    st.markdown(f"### {day}")
-
-    day_df = df[df["Day"] == day]
-
-    col_l1, col_l2 = st.columns(2)
-
-    with col_l1:
-        st.markdown("#### Line L1")
-        l1 = day_df[day_df["Line"] == "L1"]
-
-        if l1.empty:
-            st.info("No orders allocated.")
-        else:
-            st.dataframe(l1, use_container_width=True)
-
-    with col_l2:
-        st.markdown("#### Line L2")
-        l2 = day_df[day_df["Line"] == "L2"]
-
-        if l2.empty:
-            st.info("No orders allocated.")
-        else:
-            st.dataframe(l2, use_container_width=True)
-
-st.divider()
-
-# ============================================================
-# CAPACITY MOCK-UP
-# ============================================================
-
-st.subheader("Capacity Usage by Line and Day")
-
-capacity_data = pd.DataFrame({
-    "Day": ["Day 1", "Day 1", "Day 2", "Day 2", "Day 3", "Day 4", "Day 5"],
-    "Line": ["L1", "L2", "L1", "L2", "L1", "L2", "L1"],
-    "Used Capacity (%)": [92, 108, 70, 95, 35, 80, 115],
-})
-
-st.bar_chart(
-    capacity_data,
-    x="Day",
-    y="Used Capacity (%)",
-    color="Line"
+generations = st.number_input(
+    "Generations",
+    min_value=1,
+    max_value=500,
+    value=100,
+    step=10
 )
 
-st.dataframe(capacity_data, use_container_width=True)
-
-st.divider()
-
-# ============================================================
-# OPERATORS MOCK-UP
-# ============================================================
-
-st.subheader("Operators Required vs Available")
-
-operators_data = pd.DataFrame({
-    "Day": ["Day 1", "Day 2", "Day 3", "Day 4", "Day 5"],
-    "Required Operators": [30, 25, 12, 20, 35],
-    "Available Operators": [29, 29, 30, 29, 29],
-})
-
-st.bar_chart(
-    operators_data,
-    x="Day",
-    y=["Required Operators", "Available Operators"]
+mutation_rate = st.slider(
+    "Mutation rate",
+    min_value=0.0,
+    max_value=1.0,
+    value=0.10,
+    step=0.01
 )
 
-st.dataframe(operators_data, use_container_width=True)
+if st.button("Run Genetic Algorithm"):
+    with st.spinner("Loading data and running genetic algorithm..."):
+        instance = load_real_instance(excel_path)
 
-st.divider()
+        best_solution, best_metrics = run_genetic_algorithm(
+            instance,
+            population_size=population_size,
+            generations=generations,
+            mutation_rate=mutation_rate,
+            elite_size=5,
+            tournament_size=3,
+            seed=42,
+        )
 
-# ============================================================
-# WARNINGS
-# ============================================================
+    st.subheader("Solution Metrics")
 
-st.subheader("Planning Warnings")
+    col1, col2, col3, col4, col5 = st.columns(5)
 
-st.warning("Day 1 - Line L2 exceeds available capacity.")
-st.warning("Day 5 - Line L1 exceeds available capacity.")
-st.warning("Day 5 requires more operators than available.")
+    col1.metric(
+        "Total penalty",
+        f"{best_metrics['total_penalty']:.2f}"
+    )
 
-st.success("This mock-up will later be connected to the genetic algorithm output.")
+    col2.metric(
+        "Delay",
+        f"{best_metrics['delay_days_total']} days"
+    )
+
+    col3.metric(
+        "Capacity excess",
+        f"{best_metrics['total_capacity_excess']:.2f} min"
+    )
+
+    col4.metric(
+        "Operator excess",
+        f"{best_metrics['total_operator_excess']:.0f}"
+    )
+
+    col5.metric(
+        "Setup time",
+        f"{best_metrics['setup_total_min']:.0f} min"
+    )
+
+    st.subheader("Best Production Plan")
+
+    plan_rows = []
+
+    for item in best_solution:
+        production_date = get_production_date(instance, item["day"])
+
+        delivery_date = item.get("delivery_calendar_date")
+
+        if delivery_date is None:
+            order_id = item.get("order_id")
+            if order_id is not None:
+                delivery_date = instance["demand"][order_id].get(
+                    "delivery_calendar_date"
+                )
+
+        plan_rows.append({
+            "Production date": production_date,
+            "Line": item["line"],
+            "Reference": item["ref_id"],
+            "Master boxes": item["master_boxes"],
+            "Delivery date": format_date(delivery_date),
+            "Priority": item["priority"],
+        })
+
+    plan_df = pd.DataFrame(plan_rows)
+
+    st.dataframe(
+        plan_df,
+        use_container_width=True
+    )
