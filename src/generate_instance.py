@@ -1,4 +1,6 @@
 import random
+import unicodedata
+
 import openpyxl
 from datetime import datetime, date, timedelta
 
@@ -62,6 +64,26 @@ def _safe_time(value, default=None):
         return default
 
     return value
+
+
+def _normalize_label(value):
+    if value is None:
+        return ""
+
+    text = str(value).strip().lower()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(
+        char for char in text
+        if not unicodedata.combining(char)
+    )
+
+    text = text.replace("\u00ba", "o")
+    text = text.replace("\u00aa", "a")
+
+    for char in ["_", "-", "/", "\\", "(", ")", "[", "]", ":", ";"]:
+        text = text.replace(char, " ")
+
+    return " ".join(text.split())
 
 
 def _safe_date(value, default=None):
@@ -288,11 +310,29 @@ def _read_structure_sheet(ws):
         "do operators rotate between l0/l1/l2?": ("operators_rotate_L0_L1_L2", "bool"),
     }
 
+    extra_param_to_key = {
+        "1\u00ba dia do planeamento": ("planning_start_date", "date"),
+        "ultimo dia a planear": ("planning_end_date", "date"),
+        "numero total de operadores produtivos": ("n_productive_operators", "int"),
+        "capacidade efetiva de l0 por dia minutos": ("capacity_L0_min", "int"),
+        "numero de fornos disponiveis": ("n_ovens", "int"),
+    }
+
+    param_to_key = {
+        _normalize_label(key): value
+        for key, value in param_to_key.items()
+    }
+
+    param_to_key.update({
+        _normalize_label(key): value
+        for key, value in extra_param_to_key.items()
+    })
+
     for row in ws.iter_rows(min_row=2, max_row=ws.max_row, values_only=True):
         if row[0] is None:
             continue
 
-        param = str(row[0]).strip().lower()
+        param = _normalize_label(row[0])
         value = row[1]
 
         mapping = param_to_key.get(param)
@@ -362,13 +402,71 @@ def _read_competencies_sheet(ws):
     return competencies
 
 
-def _read_setups_sheet(ws, all_families):
+def _read_family_aliases_sheet(ws):
+    aliases = {}
+
+    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
+        family = _safe_text(row[3] if len(row) > 3 else None)
+
+        if family:
+            family = family.lower()
+            aliases[_normalize_label(family)] = family
+
+        family_name = _safe_text(row[20] if len(row) > 20 else None)
+        family_code = _safe_text(row[21] if len(row) > 21 else None)
+
+        if family_name:
+            family_name = family_name.lower()
+            aliases[_normalize_label(family_name)] = family_name
+
+            if family_code:
+                aliases[_normalize_label(family_code)] = family_name
+
+    return aliases
+
+
+def _canonical_family(value, family_aliases):
+    if value is None:
+        return None
+
+    text = str(value).strip().lower()
+    key = _normalize_label(text)
+
+    return family_aliases.get(key, text)
+
+
+def _read_family_display_names_sheet(ws, all_families):
+    display_by_family = {
+        family: family
+        for family in all_families
+    }
+
+    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
+        family_name = _safe_text(row[20] if len(row) > 20 else None)
+        family_code = _safe_text(row[21] if len(row) > 21 else None)
+
+        if family_name and family_code:
+            family_name = family_name.lower()
+            display_by_family[family_name] = family_code
+
+    return [
+        display_by_family.get(family, family)
+        for family in all_families
+    ]
+
+
+def _read_setups_sheet(ws, all_families, family_aliases=None):
     matrix = {}
+    family_aliases = family_aliases or {}
+    valid_families = set(all_families)
+
+    for family in all_families:
+        family_aliases[_normalize_label(family)] = family
 
     header = list(ws.iter_rows(min_row=4, max_row=4, values_only=True))[0]
 
     column_families = [
-        str(c).strip().lower() if c else None
+        _canonical_family(c, family_aliases)
         for c in header[1:]
     ]
 
@@ -376,10 +474,13 @@ def _read_setups_sheet(ws, all_families):
         if row[0] is None:
             continue
 
-        from_family = str(row[0]).strip().lower()
+        from_family = _canonical_family(row[0], family_aliases)
 
         for j, to_family in enumerate(column_families):
-            if to_family is None:
+            if from_family is None or to_family is None:
+                continue
+
+            if from_family not in valid_families or to_family not in valid_families:
                 continue
 
             value = row[j + 1] if j + 1 < len(row) else None
@@ -400,14 +501,75 @@ def _read_setups_sheet(ws, all_families):
     return matrix, n_estimated
 
 
+def _find_header_indexes(ws):
+    aliases = {
+        "ref_id": ["ref id", "referencia", "reference", "produto"],
+        "master_boxes": [
+            "master boxes",
+            "caixas master",
+            "quantidade",
+            "forecast unid",
+            "forecast unidades",
+        ],
+        "delivery_date": ["data entrega", "delivery date", "due date"],
+        "priority": ["prioridade", "priority"],
+    }
+
+    for row_number, row in enumerate(
+        ws.iter_rows(min_row=1, max_row=min(ws.max_row, 20), values_only=True),
+        start=1
+    ):
+        labels = [_normalize_label(cell) for cell in row]
+        indexes = {}
+
+        for field, names in aliases.items():
+            normalized_names = [_normalize_label(name) for name in names]
+
+            for index, label in enumerate(labels):
+                if label in normalized_names:
+                    indexes[field] = index
+                    break
+
+        if "ref_id" in indexes:
+            return row_number, indexes
+
+    return None, {}
+
+
+def _get_row_value(row, indexes, field, default_index=None):
+    index = indexes.get(field, default_index)
+
+    if index is None or index >= len(row):
+        return None
+
+    return row[index]
+
+
 def _read_demand_sheet(ws, working_days=None):
     demand = []
+    header_row, indexes = _find_header_indexes(ws)
 
-    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
-        if row[0] is None:
+    if header_row is None:
+        header_row = 4
+        indexes = {
+            "ref_id": 0,
+            "master_boxes": 1,
+            "delivery_date": 2,
+            "priority": 3,
+        }
+
+    for row in ws.iter_rows(
+        min_row=header_row + 1,
+        max_row=ws.max_row,
+        values_only=True
+    ):
+        ref_id = _get_row_value(row, indexes, "ref_id")
+
+        if ref_id is None:
             continue
 
-        delivery_calendar_date = _safe_date(row[2])
+        delivery_value = _get_row_value(row, indexes, "delivery_date")
+        delivery_calendar_date = _safe_date(delivery_value)
 
         has_calendar_horizon = (
             working_days
@@ -420,16 +582,22 @@ def _read_demand_sheet(ws, working_days=None):
                 working_days
             )
         else:
-            delivery_date = _safe_int(row[2], default=1)
+            delivery_date = _safe_int(delivery_value, default=1)
             adjusted_delivery_date = None
 
         order = {
-            "ref_id": str(row[0]).strip(),
-            "master_boxes": _safe_int(row[1], default=0),
+            "ref_id": str(ref_id).strip(),
+            "master_boxes": _safe_int(
+                _get_row_value(row, indexes, "master_boxes"),
+                default=0
+            ),
             "delivery_calendar_date": delivery_calendar_date,
             "adjusted_delivery_date": adjusted_delivery_date,
             "delivery_date": delivery_date,
-            "priority": _safe_text(row[3], default="Medium"),
+            "priority": _safe_text(
+                _get_row_value(row, indexes, "priority"),
+                default="Medium"
+            ),
         }
 
         demand.append(order)
@@ -591,10 +759,16 @@ def load_real_instance(
     competencies = _read_competencies_sheet(wb["5_COMPETENCIAS"])
 
     families = sorted(set(r["family"] for r in refs))
+    family_aliases = _read_family_aliases_sheet(wb["2_REFERENCIAS"])
+    family_display_names = _read_family_display_names_sheet(
+        wb["2_REFERENCIAS"],
+        families
+    )
 
     setups_matrix, n_setups_estimated = _read_setups_sheet(
         wb["3_SETUPS"],
-        families
+        families,
+        family_aliases=family_aliases
     )
 
     machines_sheet = next(
@@ -662,6 +836,7 @@ def load_real_instance(
 
         "refs": refs,
         "families": families,
+        "family_display_names": family_display_names,
         "setups_matrix": setups_matrix,
         "operators": operators,
         "competencies": competencies,
@@ -736,9 +911,14 @@ def print_instance_summary(instance):
 
     print("\nFAMILIES")
     print(f"  Total: {meta['n_families']}")
+    family_display_names = instance.get(
+        "family_display_names",
+        instance["families"]
+    )
+
     print(
-        f"  List: {', '.join(instance['families'][:10])}"
-        f"{'...' if len(instance['families']) > 10 else ''}"
+        f"  List: {', '.join(family_display_names[:10])}"
+        f"{'...' if len(family_display_names) > 10 else ''}"
     )
 
     print("\nSETUPS")

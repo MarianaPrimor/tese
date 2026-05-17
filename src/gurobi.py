@@ -2,7 +2,12 @@ import gurobipy as gp
 from gurobipy import GRB
 
 from generate_instance import load_real_instance, calculate_production_time
-from evaluator import create_refs_by_id, valid_lines_for_ref
+from evaluator import (
+    create_refs_by_id,
+    valid_lines_for_ref,
+    evaluate_solution,
+    print_metrics,
+)
 
 
 DELAY_WEIGHT = 100
@@ -32,6 +37,15 @@ def get_required_operators(ref, line):
         return (ref["ops_L2_prod"] or 0) + (ref["ops_L2_finish"] or 0)
 
     return 0
+
+def get_selected_assignment(x, order, lines, days):
+    for line in lines:
+        for day in days:
+            if x[order, line, day].X > 0.5:
+                return line, day
+
+    return None, None
+
 
 
 def _selected_assignment(x, order, lines, days):
@@ -216,12 +230,14 @@ def solve_with_gurobi(instance):
             operator_excess[d].X
             for d in days
         )
-
+        gurobi_solution = []
         print("\n=== OBJECTIVE BREAKDOWN ===")
         print(f"Total objective: {model.ObjVal:.2f}")
         print(f"Delay penalty: {delay_component:.2f}")
         print(f"Capacity penalty: {capacity_component:.2f}")
         print(f"Operator penalty: {operator_component:.2f}")
+
+
 
         print("\n=== SOLUTION ===")
 
@@ -232,6 +248,16 @@ def solve_with_gurobi(instance):
                 continue
 
             order = instance["demand"][o]
+            gurobi_solution.append({
+                "order_id": o,
+                "ref_id": str(order["ref_id"]).strip(),
+                "master_boxes": order["master_boxes"],
+                "delivery_date": order["delivery_date"],
+                "priority": order.get("priority", "Medium"),
+                "day": day,
+                "line": line,
+            })
+
             ref = refs_by_id[str(order["ref_id"]).strip()]
             production_time = get_production_time(
                 ref,
@@ -278,20 +304,39 @@ def solve_with_gurobi(instance):
         print("\n=== OPERATORS ===")
 
         for d in days:
-            total_required = sum(operator_required[l, d].X for l in lines)
+            required_by_line = {}
+
+            for l in lines:
+                line_required = 0
+
+                for o in orders:
+                    if x[o, l, d].X > 0.5:
+                        order = instance["demand"][o]
+                        ref = refs_by_id[str(order["ref_id"]).strip()]
+                        required_ops = get_required_operators(ref, l)
+
+                        line_required = max(line_required, required_ops)
+
+                required_by_line[l] = line_required
+
+            total_required = sum(required_by_line.values())
+            real_excess = max(0, total_required - instance["standard_operators"])
 
             print(
                 f"Day {d}: "
                 f"required {total_required:.0f} / "
                 f"standard {instance['standard_operators']} / "
-                f"excess {operator_excess[d].X:.0f}"
-            )
+                f"excess {real_excess:.0f}"
+                )
 
             for l in lines:
                 print(
-                    f"  {l}: {operator_required[l, d].X:.0f} operators"
+                    f"  {l}: {required_by_line[l]:.0f} operators"
                 )
 
+        print("\n=== EVALUATOR CHECK ON GUROBI SOLUTION ===")
+        evaluator_metrics = evaluate_solution(gurobi_solution, instance)
+        print_metrics(evaluator_metrics)
         print("\n=== CAPACITY EXCESS ONLY ===")
 
         for l in lines:

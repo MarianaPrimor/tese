@@ -14,7 +14,7 @@ INVALID_LINE_PENALTY = 10000
 CAPACITY_PENALTY = 50
 DELAY_PENALTY = 100
 OPERATORS_PENALTY = 80
-SETUP_PENALTY = 1
+SETUP_PENALTY = 0
 
 
 # ============================================================
@@ -60,7 +60,7 @@ def generate_random_solution(instance, seed=42):
 
     skipped_orders = 0
 
-    for order in instance["demand"]:
+    for order_index, order in enumerate(instance["demand"]):
         ref_id = _normalize_ref_id(order["ref_id"])
 
         if ref_id not in refs_by_id:
@@ -82,6 +82,7 @@ def generate_random_solution(instance, seed=42):
         day = random.randint(1, instance["n_days"])
 
         solution.append({
+            "order_id": order_index,
             "ref_id": ref_id,
             "master_boxes": order["master_boxes"],
             "delivery_date": order["delivery_date"],
@@ -100,18 +101,16 @@ def generate_random_solution(instance, seed=42):
 # OPERATORS
 # ============================================================
 
-def calculate_available_operators_per_day(instance):
-    operators_per_day = {}
+def calculate_standard_operators(instance):
+    standard_operators = instance.get("standard_operators")
 
-    for d in range(instance["n_days"]):
-        day = d + 1
-
-        operators_per_day[day] = sum(
-            op["availability"][d]
-            for op in instance["operators"]
+    if standard_operators is None:
+        raise ValueError(
+            "standard_operators is missing from the instance. "
+            "Check generate_instance.py and sheet 1_ESTRUTURA."
         )
 
-    return operators_per_day
+    return standard_operators
 
 
 # ============================================================
@@ -172,11 +171,14 @@ def get_setup(instance, previous_family, current_family):
 
 def evaluate_solution(solution, instance):
     refs_by_id = create_refs_by_id(instance)
-    available_operators = calculate_available_operators_per_day(instance)
+    standard_operators = calculate_standard_operators(instance)
 
     production_time_by_day_line = {}
     setup_time_by_day_line = {}
+    operators_required_by_day_line = {}
     operators_required_by_day = {}
+    operator_excess_by_day = {}
+    capacity_excess_by_day_line = {}
 
     total_penalty = 0
 
@@ -185,6 +187,8 @@ def evaluate_solution(solution, instance):
     delay_days_total = 0
     operator_violations = 0
     total_setup_time = 0
+    total_capacity_excess = 0
+    total_operator_excess = 0
 
     sorted_solution = sorted(
         enumerate(solution),
@@ -251,9 +255,9 @@ def evaluate_solution(solution, instance):
 
         required_ops = get_required_operators(ref, line)
 
-        operators_required_by_day[day] = (
-            operators_required_by_day.get(day, 0)
-            + required_ops
+        operators_required_by_day_line[key] = max(
+            operators_required_by_day_line.get(key, 0),
+            required_ops
         )
 
         delivery_date = item["delivery_date"]
@@ -266,23 +270,34 @@ def evaluate_solution(solution, instance):
     for key in production_time_by_day_line:
         total_time = (
             production_time_by_day_line[key]
-            + setup_time_by_day_line.get(key, 0)
         )
 
-        if total_time > instance["available_line_time_min"]:
-            excess = total_time - instance["available_line_time_min"]
+        excess = max(0, total_time - instance["available_line_time_min"])
+        capacity_excess_by_day_line[key] = excess
+
+        if excess > 0:
             capacity_violations += 1
+            total_capacity_excess += excess
             total_penalty += excess * CAPACITY_PENALTY
 
-    for day, required_ops in operators_required_by_day.items():
-        available_ops = available_operators.get(day, 0)
+    for day in range(1, instance["n_days"] + 1):
+        required_ops = sum(
+            operators_required_by_day_line.get((day, line), 0)
+            for line in instance["final_lines"]
+        )
 
-        if required_ops > available_ops:
-            excess = required_ops - available_ops
+        operators_required_by_day[day] = required_ops
+
+        excess = max(0, required_ops - standard_operators)
+        operator_excess_by_day[day] = excess
+
+        if excess > 0:
             operator_violations += 1
+            total_operator_excess += excess
             total_penalty += excess * OPERATORS_PENALTY
 
-    total_penalty += total_setup_time * SETUP_PENALTY
+    setup_penalty = total_setup_time * SETUP_PENALTY
+    total_penalty += setup_penalty
 
     metrics = {
         "total_penalty": total_penalty,
@@ -291,18 +306,19 @@ def evaluate_solution(solution, instance):
         "delay_days_total": delay_days_total,
         "operator_violations": operator_violations,
         "setup_total_min": total_setup_time,
+        "total_capacity_excess": total_capacity_excess,
+        "total_operator_excess": total_operator_excess,
+        "setup_penalty": setup_penalty,
         "production_time_by_day_line": production_time_by_day_line,
         "setup_time_by_day_line": setup_time_by_day_line,
+        "capacity_excess_by_day_line": capacity_excess_by_day_line,
+        "operators_required_by_day_line": operators_required_by_day_line,
         "operators_required_by_day": operators_required_by_day,
-        "available_operators": available_operators,
+        "operator_excess_by_day": operator_excess_by_day,
+        "standard_operators": standard_operators,
     }
 
     return metrics
-
-
-# ============================================================
-# PRINT FUNCTIONS
-# ============================================================
 
 def print_solution(solution):
     print("\n=== GENERATED SOLUTION ===")
@@ -318,40 +334,52 @@ def print_solution(solution):
             f"priority {item['priority']}"
         )
 
-
 def print_metrics(metrics):
     print("\n=== SOLUTION METRICS ===")
 
     print(f"Total penalty: {metrics['total_penalty']:.2f}")
     print(f"Invalid assignments: {metrics['invalid_assignments']}")
     print(f"Capacity violations: {metrics['capacity_violations']}")
+    print(f"Total capacity excess: {metrics['total_capacity_excess']:.2f} min")
     print(f"Total delay: {metrics['delay_days_total']} days")
     print(f"Operator violations: {metrics['operator_violations']}")
+    print(f"Total operator excess: {metrics['total_operator_excess']:.2f}")
     print(f"Total setup time: {metrics['setup_total_min']:.2f} min")
 
     print("\nProduction time by day/line:")
 
     for key, value in metrics["production_time_by_day_line"].items():
-        print(f"  {key}: {value:.2f} min")
+        excess = metrics["capacity_excess_by_day_line"].get(key, 0)
+
+        print(
+            f"  {key}: "
+            f"{value:.2f} min production / "
+            f"{excess:.2f} min excess"
+        )
+
+    print("\nRequired operators by day/line:")
+
+    for key, value in metrics["operators_required_by_day_line"].items():
+        print(f"  {key}: {value} operators")
 
     print("\nRequired operators by day:")
 
     for day, value in metrics["operators_required_by_day"].items():
-        available = metrics["available_operators"].get(day, 0)
+        excess = metrics["operator_excess_by_day"].get(day, 0)
 
         print(
             f"  Day {day}: "
             f"{value} required / "
-            f"{available} available"
+            f"{metrics['standard_operators']} standard / "
+            f"{excess} excess"
         )
-
 
 # ============================================================
 # TEST BLOCK
 # ============================================================
 
 if __name__ == "__main__":
-    instance = load_real_instance("Inputs_Doceleia.xlsx")
+    instance = load_real_instance("../Inputs_Doceleia.xlsx")
 
     solution = generate_random_solution(instance, seed=42)
 
