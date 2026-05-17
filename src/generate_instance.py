@@ -1,6 +1,6 @@
 import random
 import openpyxl
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 
 LINE_GROSS_CAPACITY_MIN = 480
@@ -62,6 +62,77 @@ def _safe_time(value, default=None):
         return default
 
     return value
+
+
+def _safe_date(value, default=None):
+    if value is None:
+        return default
+
+    if isinstance(value, datetime):
+        return value.date()
+
+    if isinstance(value, date):
+        return value
+
+    if isinstance(value, str):
+        value = value.strip()
+
+        if value == "":
+            return default
+
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(value, fmt).date()
+            except ValueError:
+                pass
+
+    return default
+
+
+def _build_working_days(start_date, end_date, holidays=None):
+    holidays = holidays or set()
+    working_days = []
+    current = start_date
+
+    while current <= end_date:
+        is_weekend = current.weekday() >= 5
+
+        if not is_weekend and current not in holidays:
+            working_days.append(current)
+
+        current += timedelta(days=1)
+
+    return working_days
+
+
+def _read_holidays_sheet(ws):
+    holidays = set()
+
+    for row in ws.iter_rows(min_row=2, max_row=ws.max_row, values_only=True):
+        holiday = _safe_date(row[0])
+
+        if holiday is not None:
+            holidays.add(holiday)
+
+    return holidays
+
+
+def _delivery_day_from_calendar(delivery_date, working_days):
+    if delivery_date is None:
+        return 1, None
+
+    if not working_days:
+        return 1, None
+
+    adjusted_date = delivery_date
+
+    while adjusted_date not in working_days:
+        adjusted_date -= timedelta(days=1)
+
+        if adjusted_date < working_days[0]:
+            return 1, adjusted_date
+
+    return working_days.index(adjusted_date) + 1, adjusted_date
 
 
 def _is_yes(value):
@@ -154,7 +225,9 @@ def _read_references_sheet(ws):
 
 def _read_structure_sheet(ws):
     structure = {
-        "n_days": 5,
+        "n_days": None,
+        "planning_start_date": None,
+        "planning_end_date": None,
         "line_capacity_min": LINE_GROSS_CAPACITY_MIN,
         "end_of_day_cleaning_time_min": END_OF_DAY_CLEANING_TIME_MIN,
         "cleaning_operators": CLEANING_OPERATORS,
@@ -187,8 +260,11 @@ def _read_structure_sheet(ws):
     param_to_key = {
         "number of working days": ("n_days", "int"),
         "working days": ("n_days", "int"),
+        "1º dia do planeamento": ("planning_start_date", "date"),
+        "último dia a planear": ("planning_end_date", "date"),
         "effective capacity of l0 per day (minutes)": ("capacity_L0_min", "int"),
         "standard lead time l0 → l1/l2 (days)": ("lead_time_standard_L0_L1L2_days", "int"),
+        "standard lead time l0 â†’ l1/l2 (days)": ("lead_time_standard_L0_L1L2_days", "int"),
         "start time of l0": ("start_time_L0", "time"),
         "end time of l0": ("end_time_L0", "time"),
         "number of available ovens": ("n_ovens", "int"),
@@ -208,7 +284,7 @@ def _read_structure_sheet(ws):
         "effective capacity l2 finishing/packaging (minutes)": ("capacity_L2_finish_min", "int"),
         "time of nitrogen chamber l2 (minutes)": ("nitrogen_time_L2_min", "int"),
         "total number of productive operators": ("n_productive_operators", "int"),
-        "total number of operators": ("n_operators", "int"),
+        "numero total de operadores produtivos": ("n_productive_operators", "int"),
         "do operators rotate between l0/l1/l2?": ("operators_rotate_L0_L1_L2", "bool"),
     }
 
@@ -230,6 +306,8 @@ def _read_structure_sheet(ws):
                 structure[key] = _is_yes(value)
             elif type_ == "time":
                 structure[key] = _safe_time(value, default=structure[key])
+            elif type_ == "date":
+                structure[key] = _safe_date(value, default=structure[key])
             else:
                 structure[key] = _safe_text(value, default=structure[key])
 
@@ -254,6 +332,7 @@ def _read_operators_sheet(ws):
         availability = [
             _safe_int(row[3 + i], default=0)
             for i in range(5)
+            if 3 + i < len(row)
         ]
 
         operators.append({
@@ -321,33 +400,34 @@ def _read_setups_sheet(ws, all_families):
     return matrix, n_estimated
 
 
-def _read_demand_sheet(ws, start_date=None):
+def _read_demand_sheet(ws, working_days=None):
     demand = []
 
     for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
         if row[0] is None:
             continue
 
-        delivery_value = row[2]
+        delivery_calendar_date = _safe_date(row[2])
 
-        if isinstance(delivery_value, (datetime, date)):
-            if start_date:
-                if isinstance(start_date, datetime):
-                    start_date = start_date.date()
+        has_calendar_horizon = (
+            working_days
+            and working_days[0] is not None
+        )
 
-                if isinstance(delivery_value, datetime):
-                    delivery_value = delivery_value.date()
-
-                delta = delivery_value - start_date
-                delivery_date = delta.days + 1
-            else:
-                delivery_date = 1
+        if has_calendar_horizon and delivery_calendar_date:
+            delivery_date, adjusted_delivery_date = _delivery_day_from_calendar(
+                delivery_calendar_date,
+                working_days
+            )
         else:
-            delivery_date = _safe_int(delivery_value, default=1)
+            delivery_date = _safe_int(row[2], default=1)
+            adjusted_delivery_date = None
 
         order = {
             "ref_id": str(row[0]).strip(),
             "master_boxes": _safe_int(row[1], default=0),
+            "delivery_calendar_date": delivery_calendar_date,
+            "adjusted_delivery_date": adjusted_delivery_date,
             "delivery_date": delivery_date,
             "priority": _safe_text(row[3], default="Medium"),
         }
@@ -370,7 +450,7 @@ def _generate_synthetic_demand(refs, n_days, n_orders=15, seed=42):
     ]
 
     if not valid_refs:
-        print("⚠️ No valid references found to generate synthetic demand.")
+        print("No valid references found to generate synthetic demand.")
         return []
 
     demand = []
@@ -381,6 +461,8 @@ def _generate_synthetic_demand(refs, n_days, n_orders=15, seed=42):
         order = {
             "ref_id": ref["id"],
             "master_boxes": random.choice([100, 150, 200, 300, 500]),
+            "delivery_calendar_date": None,
+            "adjusted_delivery_date": None,
             "delivery_date": random.randint(2, n_days),
             "priority": random.choice(["High", "Medium", "Low"]),
         }
@@ -388,11 +470,9 @@ def _generate_synthetic_demand(refs, n_days, n_orders=15, seed=42):
         demand.append(order)
 
     return demand
+
+
 def _normalize_key(value):
-    """
-    Normalizes names to create safe dictionary keys.
-    Example: 'Máquina de Corte' -> 'maquina_de_corte'
-    """
     if value is None:
         return None
 
@@ -421,24 +501,8 @@ def _normalize_key(value):
 
 
 def _read_machines_sheet(ws):
-    """
-    Reads sheet 10_MÁQUINAS.
-
-    Returns:
-    - machines: available quantity of each machine/resource
-    - ref_machine_requirements: machine requirements by reference
-    """
-
     machines = {}
     ref_machine_requirements = {}
-
-    # ========================================================
-    # 1) READ AVAILABLE MACHINES
-    # Table A:D
-    # Col 1 = machine name
-    # Col 2 = total quantity
-    # Col 3 = section
-    # ========================================================
 
     for row in ws.iter_rows(min_row=4, max_row=ws.max_row, values_only=True):
         machine_name = row[1]
@@ -456,18 +520,8 @@ def _read_machines_sheet(ws):
             "section": section,
         }
 
-    # ========================================================
-    # 2) READ MACHINE REQUIREMENTS BY REFERENCE
-    # Table F:X
-    # Col 5 = product name
-    # Col 6 = ref_id
-    # Col 7 onwards = machine consumption
-    # ========================================================
-
     header = list(ws.iter_rows(min_row=3, max_row=3, values_only=True))[0]
 
-    # Machine columns start at index 7
-    # In your sheet they go from H to X
     machine_columns = []
 
     for col_idx in range(7, 24):
@@ -511,8 +565,29 @@ def load_real_instance(
     wb = openpyxl.load_workbook(excel_path, data_only=True)
 
     structure = _read_structure_sheet(wb["1_ESTRUTURA"])
+
+    holidays = set()
+
+    if "7_FERIADOS" in wb.sheetnames:
+        holidays = _read_holidays_sheet(wb["7_FERIADOS"])
+
+    if not structure["planning_start_date"] or not structure["planning_end_date"]:
+        raise ValueError(
+            "Planning start date and planning end date must be defined in "
+            "sheet 1_ESTRUTURA using '1º dia do planeamento' and "
+            "'Último dia a planear'."
+        )
+
+    working_days = _build_working_days(
+        structure["planning_start_date"],
+        structure["planning_end_date"],
+        holidays
+    )
+
+    structure["n_days"] = len(working_days)
+
     refs, incomplete_refs = _read_references_sheet(wb["2_REFERENCIAS"])
-    operators = _read_operators_sheet(wb["4_OPERADORES"])
+    operators = []
     competencies = _read_competencies_sheet(wb["5_COMPETENCIAS"])
 
     families = sorted(set(r["family"] for r in refs))
@@ -521,18 +596,27 @@ def load_real_instance(
         wb["3_SETUPS"],
         families
     )
-    if "10_MÁQUINAS" in wb.sheetnames:
+
+    machines_sheet = next(
+        (name for name in wb.sheetnames if name.startswith("10_")),
+        None
+    )
+
+    if machines_sheet is not None:
         machines, ref_machine_requirements = _read_machines_sheet(
-            wb["10_MÁQUINAS"]
+            wb[machines_sheet]
         )
-        machines_source = "Excel sheet 10_MÁQUINAS"
+        machines_source = f"Excel sheet {machines_sheet}"
     else:
         machines = {}
         ref_machine_requirements = {}
         machines_source = "not available"
 
     if "6_PROCURA" in wb.sheetnames:
-        demand = _read_demand_sheet(wb["6_PROCURA"])
+        demand = _read_demand_sheet(
+            wb["6_PROCURA"],
+            working_days=working_days
+        )
 
         if demand:
             demand_source = "Excel sheet 6_PROCURA"
@@ -553,10 +637,20 @@ def load_real_instance(
         )
         demand_source = "synthetic because 6_PROCURA does not exist"
 
+    standard_operators = structure["n_productive_operators"]
+
+    if standard_operators is None:
+        raise ValueError(
+            "Numero total de operadores produtivos must be defined in sheet 1_ESTRUTURA."
+        )
+       
     instance = {
         "n_days": structure["n_days"],
         "final_lines": ["L1", "L2"],
         "days": [f"day_{i + 1}" for i in range(structure["n_days"])],
+        "working_days": working_days,
+        "holidays": sorted(holidays),
+        "standard_operators": standard_operators,
         "line_capacity_min": structure["line_capacity_min"],
         "end_of_day_cleaning_time_min": structure["end_of_day_cleaning_time_min"],
         "cleaning_operators": structure["cleaning_operators"],
@@ -596,11 +690,17 @@ def print_instance_summary(instance):
     meta = instance["_meta"]
 
     print("=" * 70)
-    print("LOADED INSTANCE — SUMMARY")
+    print("LOADED INSTANCE - SUMMARY")
     print("=" * 70)
 
     print("\nSTRUCTURE")
     print(f"  Horizon: {instance['n_days']} working days")
+
+    if instance["working_days"] and instance["working_days"][0] is not None:
+        print(f"  Planning start: {instance['working_days'][0]}")
+        print(f"  Planning end: {instance['working_days'][-1]}")
+        print(f"  Holidays/non-working days: {len(instance['holidays'])}")
+
     print(f"  Gross capacity Line 1/Line 2: {instance['line_capacity_min']} min/day")
     print(
         f"  End of day cleaning: {instance['end_of_day_cleaning_time_min']} min "
@@ -610,6 +710,7 @@ def print_instance_summary(instance):
         f"  Available for production: "
         f"{instance['available_line_time_min']} min/day"
     )
+    print(f"  Standard operators per day: {instance['standard_operators']}")
 
     print("\nREFERENCES")
     print(f"  Total: {meta['n_refs_total']}")
@@ -625,7 +726,7 @@ def print_instance_summary(instance):
     print(f"    Can both: {n_both}")
 
     if meta["n_incomplete_refs"] > 0:
-        print(f"  ⚠️  Incomplete refs: {meta['n_incomplete_refs']}")
+        print(f"  Incomplete refs: {meta['n_incomplete_refs']}")
 
         for ref_id, reason in meta["incomplete_refs"][:15]:
             print(f"      - {ref_id}: {reason}")
@@ -645,26 +746,41 @@ def print_instance_summary(instance):
     n_real = n_total_setups - meta["n_setups_estimated"]
 
     print(
-        f"  Matrix: {meta['n_families']}×{meta['n_families']} "
+        f"  Matrix: {meta['n_families']} x {meta['n_families']} "
         f"= {n_total_setups} values"
     )
     print(f"  Filled in Excel: {n_real}")
-    print(f"  ⚠️  Estimated (default value): {meta['n_setups_estimated']}")
+    print(f"  Estimated/default values: {meta['n_setups_estimated']}")
 
-    print("\nOPERATORS (in shared pool)")
-    print(f"  Total: {len(instance['operators'])}")
+    print("\nOPERATORS")
+    print(f"  Operators in shared pool: {len(instance['operators'])}")
 
     if instance["operators"]:
+        max_availability_days = min(
+            instance["n_days"],
+            min(len(op["availability"]) for op in instance["operators"])
+        )
+
         available_per_day = [
             sum(op["availability"][d] for op in instance["operators"])
-            for d in range(instance["n_days"])
+            for d in range(max_availability_days)
         ]
 
-        day_names = ["mon", "tue", "wed", "thu", "fri"][:instance["n_days"]]
+        day_names = [
+            f"day_{i + 1}"
+            for i in range(max_availability_days)
+        ]
 
-        print(f"  Available per day: {dict(zip(day_names, available_per_day))}")
-    
-        print("\nMACHINES / CRITICAL RESOURCES")
+        print(f"  Availability from sheet: {dict(zip(day_names, available_per_day))}")
+
+        if max_availability_days < instance["n_days"]:
+            print(
+                "  Note: operator availability sheet has fewer days than "
+                "the planning horizon. The optimization model should use "
+                "standard_operators or the Excel sheet should be extended."
+            )
+
+    print("\nMACHINES / CRITICAL RESOURCES")
     print(f"  Total machines/resources: {meta['n_machines']}")
     print(f"  Source: {meta['machines_source']}")
     print(
@@ -691,7 +807,10 @@ def print_instance_summary(instance):
         for o in instance["demand"][:5]:
             print(
                 f"    {o['ref_id']}: {o['master_boxes']} master boxes, "
-                f"delivery {o['delivery_date']}, priority {o['priority']}"
+                f"delivery day {o['delivery_date']}, "
+                f"calendar due {o.get('delivery_calendar_date')}, "
+                f"adjusted due {o.get('adjusted_delivery_date')}, "
+                f"priority {o['priority']}"
             )
 
     print()
