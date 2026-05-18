@@ -14,7 +14,7 @@ INVALID_LINE_PENALTY = 10000
 CAPACITY_PENALTY = 50
 DELAY_PENALTY = 100
 OPERATORS_PENALTY = 80
-SETUP_PENALTY = 0
+SETUP_PENALTY = 10
 
 
 # ============================================================
@@ -272,6 +272,7 @@ def evaluate_solution(solution, instance):
     for key in production_time_by_day_line:
         total_time = (
             production_time_by_day_line[key]
+            + setup_time_by_day_line.get(key, 0)
         )
 
         excess = max(0, total_time - instance["available_line_time_min"])

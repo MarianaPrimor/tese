@@ -698,6 +698,82 @@ def _read_machines_sheet(ws):
 
     return machines, ref_machine_requirements
 
+def _split_large_orders(demand, refs, final_lines, available_line_time_min):
+    refs_by_id = {
+        str(ref["id"]).strip(): ref
+        for ref in refs
+    }
+
+    split_demand = []
+
+    for order in demand:
+        ref_id = str(order["ref_id"]).strip()
+
+        if ref_id not in refs_by_id:
+            split_demand.append(order)
+            continue
+
+        ref = refs_by_id[ref_id]
+
+        possible_rates = []
+
+        if "L1" in final_lines and ref["can_L1"] and _positive_value(ref["rate_L1_prod"]):
+            possible_rates.append(ref["rate_L1_prod"])
+
+        if "L2" in final_lines and ref["can_L2"] and _positive_value(ref["rate_L2_prod"]):
+            possible_rates.append(ref["rate_L2_prod"])
+
+        if not possible_rates:
+            split_demand.append(order)
+            continue
+
+        fastest_rate = max(possible_rates)
+
+        max_cakes_per_lot = (
+            available_line_time_min / 60
+        ) * fastest_rate
+
+        max_boxes_per_lot = int(
+            max_cakes_per_lot / ref["cakes_per_box"]
+        )
+
+        if max_boxes_per_lot <= 0:
+            split_demand.append(order)
+            continue
+
+        total_boxes = order["master_boxes"]
+
+        if total_boxes <= max_boxes_per_lot:
+            new_order = dict(order)
+            new_order["original_ref_id"] = ref_id
+            new_order["lot_number"] = 1
+            new_order["n_lots"] = 1
+            split_demand.append(new_order)
+            continue
+
+        remaining_boxes = total_boxes
+        lot_number = 1
+
+        n_lots = (
+            total_boxes + max_boxes_per_lot - 1
+        ) // max_boxes_per_lot
+
+        while remaining_boxes > 0:
+            lot_boxes = min(max_boxes_per_lot, remaining_boxes)
+
+            new_order = dict(order)
+            new_order["ref_id"] = ref_id
+            new_order["master_boxes"] = lot_boxes
+            new_order["original_ref_id"] = ref_id
+            new_order["lot_number"] = lot_number
+            new_order["n_lots"] = n_lots
+
+            split_demand.append(new_order)
+
+            remaining_boxes -= lot_boxes
+            lot_number += 1
+
+    return split_demand
 
 def load_real_instance(
     excel_path="Inputs_Doceleia.xlsx",
@@ -789,7 +865,18 @@ def load_real_instance(
         raise ValueError(
             "Numero total de operadores produtivos must be defined in sheet 1_ESTRUTURA."
         )
-       
+
+    demand_before_split = len(demand)
+
+    demand = _split_large_orders(
+        demand,
+        refs,
+        ["L1", "L2"],
+        structure["line_capacity_min"] - structure["end_of_day_cleaning_time_min"]
+    )
+
+    demand_after_split = len(demand)
+
     instance = {
         "n_days": structure["n_days"],
         "final_lines": ["L1", "L2"],
@@ -826,6 +913,9 @@ def load_real_instance(
             "machines_source": machines_source,
             "n_machines": len(machines),
             "n_refs_with_machine_requirements": len(ref_machine_requirements),
+            "n_orders_before_split": demand_before_split,
+            "n_orders_after_split": demand_after_split,
+
         }
     }
 
@@ -946,6 +1036,11 @@ def print_instance_summary(instance):
 
     print("\nDEMAND")
     print(f"  Orders: {len(instance['demand'])} ({meta['demand_source']})")
+    print(
+        f"  Orders after lot splitting: "
+        f"{meta['n_orders_after_split']} "
+        f"(from {meta['n_orders_before_split']} demand rows)"
+    )
 
     if instance["demand"]:
         print("  First 5 orders:")

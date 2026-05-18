@@ -9,6 +9,7 @@ from evaluator import (
     print_metrics,
     create_refs_by_id,
     valid_lines_for_ref,
+    get_setup,
 )
 
 
@@ -54,14 +55,30 @@ def tournament_selection(population, instance, tournament_size=3):
 # ============================================================
 
 def crossover(parent_1, parent_2):
-    child = []
+    size = len(parent_1)
 
-    for gene_1, gene_2 in zip(parent_1, parent_2):
-        if random.random() < 0.5:
-            child.append(deepcopy(gene_1))
-        else:
-            child.append(deepcopy(gene_2))
+    start, end = sorted(random.sample(range(size), 2))
 
+    child = [None] * size
+
+    copied_order_ids = set()
+
+    for i in range(start, end + 1):
+        child[i] = deepcopy(parent_1[i])
+        copied_order_ids.add(parent_1[i]["order_id"])
+    
+    parent_2_index = 0
+
+    for i in range(size):
+        if child[i] is not None:
+            continue
+
+        while parent_2[parent_2_index]["order_id"] in copied_order_ids:
+            parent_2_index += 1
+
+        child[i] = deepcopy(parent_2[parent_2_index])
+        copied_order_ids.add(parent_2[parent_2_index]["order_id"])
+       
     return child
 
 
@@ -69,12 +86,34 @@ def crossover(parent_1, parent_2):
 # MUTATION
 # ============================================================
 
-def mutate(solution, instance, mutation_rate=0.10):
+def mutate(
+    solution,
+    instance,
+    mutation_rate=0.10,
+    assignment_mutation_rate=0.05
+):
     refs_by_id = create_refs_by_id(instance)
     mutated_solution = deepcopy(solution)
 
+    # Swap mutation: exchanges the position of two orders
+    if random.random() < mutation_rate and len(mutated_solution) >= 2:
+        i, j = random.sample(range(len(mutated_solution)), 2)
+
+        mutated_solution[i], mutated_solution[j] = (
+            mutated_solution[j],
+            mutated_solution[i]
+        )
+
+    # Insertion mutation: removes one order and inserts it elsewhere
+    if random.random() < mutation_rate and len(mutated_solution) >= 2:
+        i, j = random.sample(range(len(mutated_solution)), 2)
+
+        gene = mutated_solution.pop(i)
+        mutated_solution.insert(j, gene)
+
+    # Assignment mutation: changes day/line while keeping feasibility
     for gene in mutated_solution:
-        if random.random() < mutation_rate:
+        if random.random() < assignment_mutation_rate:
             ref_id = str(gene["ref_id"]).strip()
             ref = refs_by_id[ref_id]
             valid_lines = valid_lines_for_ref(ref)
@@ -85,6 +124,7 @@ def mutate(solution, instance, mutation_rate=0.10):
             gene["day"] = random.randint(1, instance["n_days"])
 
     return mutated_solution
+
 
 
 # ============================================================
@@ -157,7 +197,8 @@ def run_genetic_algorithm(
             child = mutate(
                 child,
                 instance,
-                mutation_rate=mutation_rate
+                mutation_rate=mutation_rate,
+                assignment_mutation_rate=0.15
             )
 
             new_population.append(child)

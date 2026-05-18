@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import pandas as pd
 import altair as alt
@@ -242,10 +243,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# Get the project root directory (one level up from src/)
+project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+default_excel_path = os.path.join(project_root, "Inputs_Doceleia.xlsx")
 
 excel_path = st.text_input(
     "Excel file path",
-    "../Inputs_Doceleia.xlsx"
+    default_excel_path
 )
 
 population_size = st.number_input(
