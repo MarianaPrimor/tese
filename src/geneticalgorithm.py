@@ -139,6 +139,7 @@ def run_genetic_algorithm(
     elite_size=5,
     tournament_size=3,
     seed=42,
+    max_generations_without_improvement=10,
 ):
     random.seed(seed)
 
@@ -153,6 +154,7 @@ def run_genetic_algorithm(
     best_solution = deepcopy(initial_best_solution)
     best_metrics = initial_best_metrics
     
+    generations_without_improvement = 0
     for generation in range(1, generations + 1):
         population = sorted(
             population,
@@ -168,12 +170,22 @@ def run_genetic_algorithm(
         ):
             best_solution = deepcopy(current_best)
             best_metrics = current_metrics
+            generations_without_improvement = 0
+        else:
+            generations_without_improvement += 1
 
         print(
             f"Generation {generation:03d} | "
             f"best penalty: {best_metrics['total_penalty']:.2f} | "
             f"current best: {current_metrics['total_penalty']:.2f}"
         )
+
+        if generations_without_improvement >= max_generations_without_improvement:
+            print(
+                f"Stopping early: no improvement for "
+                f"{max_generations_without_improvement} generations."
+            )
+            break   
 
         new_population = [
             deepcopy(solution)
@@ -198,7 +210,7 @@ def run_genetic_algorithm(
                 child,
                 instance,
                 mutation_rate=mutation_rate,
-                assignment_mutation_rate=0.15
+                assignment_mutation_rate=0.05
             )
 
             new_population.append(child)

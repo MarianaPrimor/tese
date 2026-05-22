@@ -169,9 +169,130 @@ def _positive_value(value):
     return isinstance(value, (int, float)) and value > 0
 
 
+
+def _find_header_indexes_generic(ws, required, aliases, max_scan_rows=30):
+    normalized_aliases = {
+        field: [_normalize_label(name) for name in names]
+        for field, names in aliases.items()
+    }
+
+    for row_number, row in enumerate(
+        ws.iter_rows(min_row=1, max_row=min(ws.max_row, max_scan_rows), values_only=True),
+        start=1
+    ):
+        labels = [_normalize_label(cell) for cell in row]
+        indexes = {}
+
+        for field, names in normalized_aliases.items():
+            for index, label in enumerate(labels):
+                if label in names:
+                    indexes[field] = index
+                    break
+
+        if all(field in indexes for field in required):
+            return row_number, indexes
+
+    return None, {}
+
+
+
 def _read_references_sheet(ws):
     refs = []
     incomplete_refs = []
+
+    header_row, indexes = _find_header_indexes_generic(
+        ws,
+        required=["ref_id"],
+        aliases={
+            "ref_id": ["ref_id", "ref id", "referencia", "reference"],
+            "name": ["nome", "name", "produto", "product"],
+            "cakes_per_box": ["unid_caixa", "unid caixa", "cakes per box"],
+            "family": ["familia", "família", "family"],
+            "lead_time_L0_days": ["lead_time_l0_dias", "lead time l0 dias"],
+            "can_L1": ["pode_l1", "pode l1", "can l1"],
+            "rate_L1_prod": ["tempo_l1_prod_min cadencia de l1", "tempo l1 prod min cadencia de l1", "rate l1 prod"],
+            "ops_L1_finish": ["operadores_nec_l1_acab", "operadores nec l1 acab"],
+            "ops_L1_prod": ["operadores_nec_l1_prod", "operadores nec l1 prod"],
+            "can_L2": ["pode_l2", "pode l2", "can l2"],
+            "rate_L2_prod": ["tempo_l2_prod_min cadencia de l2", "tempo l2 prod min cadencia de l2", "rate l2 prod"],
+            "rate_L2_finish": ["tempo_l2_acab_min cadencia de l2", "tempo l2 acab min cadencia de l2", "rate l2 finish"],
+            "ops_L2_finish": ["operadores_nec_l2_acab", "operadores nec l2 acab"],
+            "ops_L2_prod": ["operadores_nec_l2_prod", "operadores nec l2 prod"],
+        }
+    )
+
+    if header_row is None:
+        raise ValueError("Could not find ref_id header in sheet 2_REFERENCIAS.")
+
+    for row in ws.iter_rows(min_row=header_row + 1, max_row=ws.max_row, values_only=True):
+        ref_id = _get_row_value(row, indexes, "ref_id")
+
+        if ref_id is None:
+            continue
+
+        ref_id = str(ref_id).strip()
+        name = _safe_text(_get_row_value(row, indexes, "name"), default=ref_id)
+        cakes_per_box = _safe_int(_get_row_value(row, indexes, "cakes_per_box"), default=1)
+        family = _safe_text(_get_row_value(row, indexes, "family"), default="no_family").lower()
+
+        can_L1 = _is_yes(_get_row_value(row, indexes, "can_L1"))
+        rate_L1_prod = _safe_float(_get_row_value(row, indexes, "rate_L1_prod"))
+        ops_L1_finish = _safe_int(_get_row_value(row, indexes, "ops_L1_finish"))
+        ops_L1_prod = _safe_int(_get_row_value(row, indexes, "ops_L1_prod"))
+
+        if can_L1:
+            if rate_L1_prod is None:
+                incomplete_refs.append((ref_id, "can_L1=Yes but no L1 rate"))
+            if ops_L1_prod is None:
+                incomplete_refs.append((ref_id, "can_L1=Yes but no production operators L1"))
+            if ops_L1_finish is None:
+                incomplete_refs.append((ref_id, "can_L1=Yes but no finishing operators L1"))
+        else:
+            rate_L1_prod = 0
+            ops_L1_prod = 0
+            ops_L1_finish = 0
+
+        can_L2 = _is_yes(_get_row_value(row, indexes, "can_L2"))
+        rate_L2_prod = _safe_float(_get_row_value(row, indexes, "rate_L2_prod"))
+        rate_L2_finish = _safe_float(_get_row_value(row, indexes, "rate_L2_finish"))
+        ops_L2_finish = _safe_int(_get_row_value(row, indexes, "ops_L2_finish"))
+        ops_L2_prod = _safe_int(_get_row_value(row, indexes, "ops_L2_prod"))
+
+        if can_L2:
+            if rate_L2_prod is None:
+                incomplete_refs.append((ref_id, "can_L2=Yes but no production rate L2"))
+            if rate_L2_finish is None:
+                incomplete_refs.append((ref_id, "can_L2=Yes but no finishing rate L2"))
+            if ops_L2_prod is None:
+                incomplete_refs.append((ref_id, "can_L2=Yes but no production operators L2"))
+            if ops_L2_finish is None:
+                incomplete_refs.append((ref_id, "can_L2=Yes but no finishing operators L2"))
+        else:
+            rate_L2_prod = 0
+            rate_L2_finish = 0
+            ops_L2_prod = 0
+            ops_L2_finish = 0
+
+        refs.append({
+            "id": ref_id,
+            "name": name,
+            "family": family,
+            "cakes_per_box": cakes_per_box,
+            "lead_time_L0_days": _safe_int(_get_row_value(row, indexes, "lead_time_L0_days"), default=1),
+            "can_L1": can_L1,
+            "rate_L1_prod": rate_L1_prod,
+            "rate_L1_finish": rate_L1_prod,
+            "ops_L1_prod": ops_L1_prod,
+            "ops_L1_finish": ops_L1_finish,
+            "can_L2": can_L2,
+            "rate_L2_prod": rate_L2_prod,
+            "rate_L2_finish": rate_L2_finish,
+            "ops_L2_prod": ops_L2_prod,
+            "ops_L2_finish": ops_L2_finish,
+        })
+
+    return refs, incomplete_refs
+
 
     for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
         if row[0] is None:
@@ -384,26 +505,29 @@ def _read_operators_sheet(ws):
     return operators
 
 
-def _read_competencies_sheet(ws):
-    competencies = {}
-
-    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
-        if row[0] is None:
-            continue
-
-        op_id = str(row[0]).strip()
-
-        competencies[op_id] = {
-            "L0": str(row[2]).strip() if row[2] else "-",
-            "L1": str(row[3]).strip() if row[3] else "-",
-            "L2": str(row[4]).strip() if row[4] else "-",
-        }
-
-    return competencies
-
-
 def _read_family_aliases_sheet(ws):
     aliases = {}
+
+    header_row, indexes = _find_header_indexes_generic(
+        ws,
+        required=["family"],
+        aliases={
+            "family": ["familia", "família", "family"],
+        }
+    )
+
+    if header_row is None:
+        return aliases
+
+    for row in ws.iter_rows(min_row=header_row + 1, max_row=ws.max_row, values_only=True):
+        family = _safe_text(_get_row_value(row, indexes, "family"))
+
+        if family:
+            family = family.lower()
+            aliases[_normalize_label(family)] = family
+
+    return aliases
+
 
     for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
         family = _safe_text(row[3] if len(row) > 3 else None)
@@ -435,9 +559,52 @@ def _canonical_family(value, family_aliases):
     return family_aliases.get(key, text)
 
 
+
 def _read_setups_sheet(ws, all_families, family_aliases=None):
     matrix = {}
     family_aliases = family_aliases or {}
+    valid_families = set(all_families)
+
+    for family in all_families:
+        family_aliases[_normalize_label(family)] = family
+
+    header = list(ws.iter_rows(min_row=4, max_row=4, values_only=True))[0]
+
+    column_families = [
+        _canonical_family(c, family_aliases)
+        for c in header[1:]
+    ]
+
+    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
+        if row[0] is None:
+            continue
+
+        from_family = _canonical_family(row[0], family_aliases)
+
+        for j, to_family in enumerate(column_families):
+            if from_family is None or to_family is None:
+                continue
+
+            if from_family not in valid_families or to_family not in valid_families:
+                continue
+
+            value = row[j + 1] if j + 1 < len(row) else None
+
+            if isinstance(value, (int, float)):
+                matrix[(from_family, to_family)] = float(value)
+
+    DEFAULT_SETUP = 30
+    SAME_FAMILY_SETUP = 5
+    n_estimated = 0
+
+    for f1 in all_families:
+        for f2 in all_families:
+            if (f1, f2) not in matrix:
+                matrix[(f1, f2)] = SAME_FAMILY_SETUP if f1 == f2 else DEFAULT_SETUP
+                n_estimated += 1
+
+    return matrix, n_estimated
+
 
     for family in all_families:
         family_aliases[_normalize_label(family)] = family
@@ -644,9 +811,85 @@ def _normalize_key(value):
     return text
 
 
+
 def _read_machines_sheet(ws):
     machines = {}
     ref_machine_requirements = {}
+
+    header = list(ws.iter_rows(min_row=3, max_row=3, values_only=True))[0]
+    header_labels = [_normalize_label(cell) for cell in header]
+
+    machine_name_col = 0
+    quantity_col = 1
+    section_col = 2
+
+    for idx, label in enumerate(header_labels):
+        if label == "nome":
+            machine_name_col = idx
+            break
+
+    for idx, label in enumerate(header_labels):
+        if label in ["quantid total", "quantidade total", "total quantity"]:
+            quantity_col = idx
+        elif label in ["seccao", "secao", "section"]:
+            section_col = idx
+
+    for row in ws.iter_rows(min_row=4, max_row=ws.max_row, values_only=True):
+        machine_name = row[machine_name_col] if machine_name_col < len(row) else None
+        quantity = _safe_int(row[quantity_col] if quantity_col < len(row) else None, default=None)
+        section = _safe_text(row[section_col] if section_col < len(row) else None, default=None)
+
+        if machine_name is None or quantity is None:
+            continue
+
+        machine_id = _normalize_key(machine_name)
+
+        machines[machine_id] = {
+            "name": str(machine_name).strip(),
+            "quantity": quantity,
+            "section": section,
+        }
+
+    ref_id_col = None
+
+    for idx, label in enumerate(header_labels):
+        if label in ["ref id", "ref_id"]:
+            ref_id_col = idx
+            break
+
+    if ref_id_col is None:
+        return machines, ref_machine_requirements
+
+    machine_columns = []
+
+    for col_idx in range(ref_id_col + 1, len(header)):
+        machine_name = header[col_idx]
+
+        if machine_name is None:
+            continue
+
+        machine_id = _normalize_key(machine_name)
+        machine_columns.append((col_idx, machine_id))
+
+    for row in ws.iter_rows(min_row=4, max_row=ws.max_row, values_only=True):
+        ref_id = row[ref_id_col] if ref_id_col < len(row) else None
+
+        if ref_id is None:
+            continue
+
+        ref_id = str(ref_id).strip()
+        requirements = {}
+
+        for col_idx, machine_id in machine_columns:
+            quantity_needed = _safe_int(row[col_idx] if col_idx < len(row) else None, default=0)
+
+            if quantity_needed > 0:
+                requirements[machine_id] = quantity_needed
+
+        ref_machine_requirements[ref_id] = requirements
+
+    return machines, ref_machine_requirements
+
 
     for row in ws.iter_rows(min_row=4, max_row=ws.max_row, values_only=True):
         machine_name = row[1]
@@ -788,8 +1031,13 @@ def load_real_instance(
 
     holidays = set()
 
-    if "7_FERIADOS" in wb.sheetnames:
-        holidays = _read_holidays_sheet(wb["7_FERIADOS"])
+    holidays_sheet = next(
+        (name for name in wb.sheetnames if "FERIAD" in _normalize_label(name).upper()),
+        None
+    )
+
+    if holidays_sheet is not None:
+        holidays = _read_holidays_sheet(wb[holidays_sheet])
 
     if not structure["planning_start_date"] or not structure["planning_end_date"]:
         raise ValueError(
@@ -808,7 +1056,7 @@ def load_real_instance(
 
     refs, incomplete_refs = _read_references_sheet(wb["2_REFERENCIAS"])
     operators = []
-    competencies = _read_competencies_sheet(wb["5_COMPETENCIAS"])
+   
 
     families = sorted(set(r["family"] for r in refs))
     family_aliases = _read_family_aliases_sheet(wb["2_REFERENCIAS"])
@@ -820,7 +1068,10 @@ def load_real_instance(
     )
 
     machines_sheet = next(
-        (name for name in wb.sheetnames if name.startswith("10_")),
+        (
+            name for name in wb.sheetnames
+            if "maquinas" in _normalize_label(name) or name.startswith("7_") or name.startswith("10_")
+        ),
         None
     )
 
@@ -834,14 +1085,19 @@ def load_real_instance(
         ref_machine_requirements = {}
         machines_source = "not available"
 
-    if "6_PROCURA" in wb.sheetnames:
+    demand_sheet = next(
+        (name for name in wb.sheetnames if "procura" in _normalize_label(name)),
+        None
+    )
+
+    if demand_sheet is not None:
         demand = _read_demand_sheet(
-            wb["6_PROCURA"],
+            wb[demand_sheet],
             working_days=working_days
         )
 
         if demand:
-            demand_source = "Excel sheet 6_PROCURA"
+            demand_source = f"Excel sheet {demand_sheet}"
         else:
             demand = _generate_synthetic_demand(
                 refs,
@@ -849,7 +1105,7 @@ def load_real_instance(
                 n_orders=n_synthetic_orders,
                 seed=seed
             )
-            demand_source = "synthetic because 6_PROCURA is empty"
+            demand_source = f"synthetic because {demand_sheet} is empty"
     else:
         demand = _generate_synthetic_demand(
             refs,
@@ -857,7 +1113,7 @@ def load_real_instance(
             n_orders=n_synthetic_orders,
             seed=seed
         )
-        demand_source = "synthetic because 6_PROCURA does not exist"
+        demand_source = "synthetic because demand sheet does not exist"
 
     standard_operators = structure["n_productive_operators"]
 
@@ -897,7 +1153,6 @@ def load_real_instance(
         "families": families,
         "setups_matrix": setups_matrix,
         "operators": operators,
-        "competencies": competencies,
         "demand": demand,
         "machines": machines,
         "ref_machine_requirements": ref_machine_requirements,
