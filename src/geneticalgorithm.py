@@ -13,7 +13,7 @@ from evaluator import (
 )
 
 
-# INITIAL POPULATION
+# GENERATING INITIAL POPULATION
 
 
 def generate_initial_population(instance, population_size=100):
@@ -21,6 +21,7 @@ def generate_initial_population(instance, population_size=100):
 
     for seed in range(population_size):
         solution = generate_random_solution(instance, seed=seed)
+        solution = repair_capacity(solution, instance)
         population.append(solution)
 
     return population
@@ -90,7 +91,8 @@ def mutate(
     solution,
     instance,
     mutation_rate=0.10,
-    assignment_mutation_rate=0.05
+    assignment_mutation_rate=0.05,
+    postponement_mutation_rate=0.30,
 ):
     refs_by_id = create_refs_by_id(instance)
     mutated_solution = deepcopy(solution)
@@ -111,21 +113,114 @@ def mutate(
         gene = mutated_solution.pop(i)
         mutated_solution.insert(j, gene)
 
-    # Assignment mutation: changes day/line while keeping feasibility
+    # Assignment mutation: changes day/line/postponement while keeping feasibility
     for gene in mutated_solution:
         if random.random() < assignment_mutation_rate:
             ref_id = str(gene["ref_id"]).strip()
+
+            if ref_id not in refs_by_id:
+                gene["line"] = None
+                gene["day"] = None
+                gene["postponed"] = True
+                continue
+
             ref = refs_by_id[ref_id]
             valid_lines = valid_lines_for_ref(ref)
 
-            if valid_lines:
-                gene["line"] = random.choice(valid_lines)
+            if random.random() < postponement_mutation_rate:
+                gene["postponed"] = not gene.get("postponed", False)
 
-            gene["day"] = random.randint(1, instance["n_days"])
+            if gene.get("postponed") or not valid_lines:
+                gene["line"] = None
+                gene["day"] = None
+                gene["postponed"] = True
+            else:
+                gene["line"] = random.choice(valid_lines)
+                gene["day"] = random.randint(1, instance["n_days"])
 
     return mutated_solution
 
 
+def get_production_time_for_repair(ref, line, master_boxes):
+    if line == "L1":
+        rate = ref["rate_L1_prod"]
+    elif line == "L2":
+        rate = ref["rate_L2_prod"]
+    else:
+        return None
+
+    if rate is None or rate == 0:
+        return None
+
+    n_cakes = master_boxes * ref["cakes_per_box"]
+    return (n_cakes / rate) * 60
+
+
+def repair_capacity(solution, instance):
+    repaired_solution = deepcopy(solution)
+
+    refs_by_id = create_refs_by_id(instance)
+    available_capacity = instance["available_line_time_min"]
+
+    groups = {}
+
+    for gene in repaired_solution:
+        if gene.get("postponed"):
+            continue
+
+        key = (gene.get("day"), gene.get("line"))
+        groups.setdefault(key, []).append(gene)
+
+    for key, genes in groups.items():
+        day, line = key
+
+        if day is None or line is None:
+            continue
+
+        total_time = 0
+        feasible_genes = []
+
+        for gene in genes:
+            ref_id = str(gene["ref_id"]).strip()
+
+            if ref_id not in refs_by_id:
+                continue
+
+            ref = refs_by_id[ref_id]
+            production_time = get_production_time_for_repair(
+                ref,
+                line,
+                gene["master_boxes"]
+            )
+
+            if production_time is None:
+                continue
+
+            total_time += production_time
+            feasible_genes.append((gene, production_time))
+
+        if total_time <= available_capacity:
+            continue
+
+        feasible_genes = sorted(
+            feasible_genes,
+            key=lambda x: (
+                x[0].get("delivery_date", instance["n_days"]),
+                -x[1]
+            ),
+            reverse=True
+        )
+
+        while total_time > available_capacity and feasible_genes:
+            gene, production_time = feasible_genes.pop(0)
+
+            gene["postponed"] = True
+            gene["day"] = None
+            gene["line"] = None
+
+            total_time -= production_time
+
+    return repaired_solution
 
 # ============================================================
 # GENETIC ALGORITHM
@@ -212,6 +307,8 @@ def run_genetic_algorithm(
                 mutation_rate=mutation_rate,
                 assignment_mutation_rate=0.05
             )
+
+            child = repair_capacity(child, instance)
 
             new_population.append(child)
 

@@ -21,15 +21,13 @@ FINISHING_LUNCH_END = 14 * 60
 # PENALTY WEIGHTS
 # ============================================================
 
-INVALID_LINE_PENALTY = 10000
-HOURLY_OPERATORS_PENALTY = 100
-DELAY_PENALTY = 500
-CAPACITY_PENALTY = 10
-SETUP_PENALTY = 1
+INVALID_LINE_PENALTY = 1000000000
+HOURLY_OPERATORS_PENALTY = 1
+DELAY_PENALTY = 100000
+CAPACITY_PENALTY = 10000
+SETUP_PENALTY = 10
+POSTPONEMENT_PENALTY = 5000
 
-
-POSTPONEMENT_BASE_PENALTY = 10000
-POSTPONEMENT_URGENCY_PENALTY = 2000
 
 # ============================================================
 # AUXILIARY FUNCTIONS
@@ -62,14 +60,8 @@ def valid_lines_for_ref(ref):
     return lines
 
 
-def get_postponement_penalty(delivery_date, n_days):
-    due_day = delivery_date if isinstance(delivery_date, int) else n_days
-    urgency = max(1, n_days - due_day + 1)
-
-    return POSTPONEMENT_BASE_PENALTY + (
-        urgency * POSTPONEMENT_URGENCY_PENALTY
-    )
-
+def get_postponement_penalty(master_boxes):
+    return master_boxes * POSTPONEMENT_PENALTY
 
 # ============================================================
 # RANDOM SOLUTION GENERATION
@@ -452,8 +444,7 @@ def evaluate_solution(solution, instance):
         if item.get("postponed"):
             delivery_date = item.get("delivery_date")
             penalty = get_postponement_penalty(
-                delivery_date,
-                instance["n_days"]
+                item["master_boxes"]
             )
             total_penalty += penalty
             postponement_penalty += penalty
@@ -547,7 +538,6 @@ def evaluate_solution(solution, instance):
         if excess > 0:
             operator_violations += 1
             total_operator_excess += excess
-            total_penalty += excess * HOURLY_OPERATORS_PENALTY
 
     setup_penalty = total_setup_time * SETUP_PENALTY
     total_penalty += setup_penalty
