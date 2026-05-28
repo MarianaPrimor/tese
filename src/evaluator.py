@@ -1,4 +1,4 @@
-import os
+﻿import os
 import os
 import random
 
@@ -27,7 +27,6 @@ DELAY_PENALTY = 100000
 CAPACITY_PENALTY = 10000
 SETUP_PENALTY = 10
 POSTPONEMENT_PENALTY = 5000
-
 
 # ============================================================
 # AUXILIARY FUNCTIONS
@@ -87,6 +86,7 @@ def generate_random_solution(instance, seed=42, postponement_rate=0.15):
             continue
 
         ref = refs_by_id[ref_id]
+        master_boxes = order["master_boxes"]
         valid_lines = valid_lines_for_ref(ref)
 
         postponed = bool(valid_lines) and random.random() < postponement_rate
@@ -406,6 +406,7 @@ def evaluate_solution(solution, instance):
     operators_required_by_day = {}
     operator_excess_by_day = {}
     capacity_excess_by_day_line = {}
+   
 
     total_penalty = 0
 
@@ -675,3 +676,4 @@ if __name__ == "__main__":
     print_solution(solution)
 
     print_metrics(metrics)
+

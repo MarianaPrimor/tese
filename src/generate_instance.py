@@ -1,4 +1,4 @@
-import random
+﻿import random
 import unicodedata
 
 import openpyxl
@@ -239,7 +239,6 @@ def _read_references_sheet(ws):
         rate_L1_prod = _safe_float(_get_row_value(row, indexes, "rate_L1_prod"))
         ops_L1_finish = _safe_int(_get_row_value(row, indexes, "ops_L1_finish"))
         ops_L1_prod = _safe_int(_get_row_value(row, indexes, "ops_L1_prod"))
-
         if can_L1:
             if rate_L1_prod is None:
                 incomplete_refs.append((ref_id, "can_L1=Yes but no L1 rate"))
@@ -1315,3 +1314,4 @@ def print_instance_summary(instance):
 if __name__ == "__main__":
     instance = load_real_instance(excel_path="../Inputs_Doceleia.xlsx")
     print_instance_summary(instance)
+
