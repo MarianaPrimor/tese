@@ -1,4 +1,4 @@
-﻿import os
+﻿import math
 import os
 import random
 
@@ -8,6 +8,7 @@ from generate_instance import (
 )
 
 TIME_BUCKET_MIN = 30
+FINISHING_DELAY_L1_MIN = 60
 SHIFT_START_MIN = 8 * 60
 
 PRODUCTION_LUNCH_START = 12 * 60 + 30
@@ -21,12 +22,13 @@ FINISHING_LUNCH_END = 14 * 60
 # PENALTY WEIGHTS
 # ============================================================
 
-INVALID_LINE_PENALTY = 1000000000
 HOURLY_OPERATORS_PENALTY = 1
-DELAY_PENALTY = 100000
+DELAY_PENALTY = 1000
 CAPACITY_PENALTY = 10000
-SETUP_PENALTY = 10
-POSTPONEMENT_PENALTY = 5000
+SETUP_PENALTY = 100
+POSTPONEMENT_PENALTY = 10000
+ECONOMIC_VALUE_REWARD = 1
+
 
 # ============================================================
 # AUXILIARY FUNCTIONS
@@ -48,6 +50,14 @@ def create_refs_by_id(instance):
 
 
 def valid_lines_for_ref(ref):
+    fixed_line = ref.get("fixed_line")
+
+    if fixed_line == "L1" and ref["can_L1"] and _positive_value(ref["rate_L1_prod"]):
+        return ["L1"]
+
+    if fixed_line == "L2" and ref["can_L2"] and _positive_value(ref["rate_L2_prod"]):
+        return ["L2"]
+
     lines = []
 
     if ref["can_L1"] and _positive_value(ref["rate_L1_prod"]):
@@ -56,7 +66,37 @@ def valid_lines_for_ref(ref):
     if ref["can_L2"] and _positive_value(ref["rate_L2_prod"]):
         lines.append("L2")
 
-    return lines
+    return lines[:1]
+
+
+def get_valid_days_for_ref(instance, ref):
+    monday_days = set(instance.get("monday_days", []))
+
+    if ref.get("monday_forbidden"):
+        return [
+            day for day in range(1, instance["n_days"] + 1)
+            if day not in monday_days
+        ]
+
+    return list(range(1, instance["n_days"] + 1))
+
+
+def round_up_to_bucket(minutes):
+    if minutes is None:
+        return None
+
+    if minutes <= 0:
+        return 0
+
+    return math.ceil(minutes / TIME_BUCKET_MIN) * TIME_BUCKET_MIN
+
+
+def get_order_kg(item, ref):
+    return item.get("master_boxes", 0) * (ref.get("kg_per_master_box") or 0)
+
+
+def get_order_economic_value(item, ref):
+    return item.get("master_boxes", 0) * (ref.get("economic_value_per_master_box") or 0)
 
 
 def get_postponement_penalty(master_boxes):
@@ -88,18 +128,20 @@ def generate_random_solution(instance, seed=42, postponement_rate=0.15):
         ref = refs_by_id[ref_id]
         master_boxes = order["master_boxes"]
         valid_lines = valid_lines_for_ref(ref)
+        valid_days = get_valid_days_for_ref(instance, ref)
 
-        postponed = bool(valid_lines) and random.random() < postponement_rate
+        postponed = bool(valid_lines) and bool(valid_days) and random.random() < postponement_rate
 
         if postponed:
             line = None
             day = None
-        elif not valid_lines:
+        elif not valid_lines or not valid_days:
             line = None
             day = None
+            postponed = True
         else:
-            line = random.choice(valid_lines)
-            day = random.randint(1, instance["n_days"])
+            line = valid_lines[0]
+            day = random.choice(valid_days)
 
         solution.append({
             "order_id": order_index,
@@ -148,31 +190,33 @@ def get_production_time(ref, line, master_boxes):
     else:
         return None
 
-    return calculate_production_time(
+    raw_time = calculate_production_time(
         master_boxes,
         ref["cakes_per_box"],
         rate
     )
+
+    return round_up_to_bucket(raw_time)
 
 
 def get_finishing_time(ref, line, master_boxes):
-    if line == "L1":
-        rate = ref["rate_L1_finish"]
-    elif line == "L2":
-        rate = ref["rate_L2_finish"]
-    else:
+    production_time = get_production_time(ref, line, master_boxes)
+
+    if production_time is None:
         return None
 
-    return calculate_production_time(
-        master_boxes,
-        ref["cakes_per_box"],
-        rate
-    )
+    if line == "L1":
+        return max(0, production_time - FINISHING_DELAY_L1_MIN)
+
+    if line == "L2":
+        return 0
+
+    return None
 
 
 def get_finishing_delay(line):
     if line == "L1":
-        return 60
+        return FINISHING_DELAY_L1_MIN
 
     if line == "L2":
         return 0
@@ -187,9 +231,10 @@ def get_required_operators(ref, line):
         return (ref["ops_L1_prod"] or 0) + (ref["ops_L1_finish"] or 0)
 
     if line == "L2":
-        return (ref["ops_L2_prod"] or 0) + (ref["ops_L2_finish"] or 0)
+        return ref["ops_L2_prod"] or 0
 
     return 0
+
 
 def get_production_operators(ref, line):
     if line == "L1":
@@ -205,9 +250,6 @@ def get_finishing_operators(ref, line):
     if line == "L1":
         return ref["ops_L1_finish"] or 0
 
-    if line == "L2":
-        return ref["ops_L2_finish"] or 0
-
     return 0
 
 
@@ -222,12 +264,12 @@ def get_setup(instance, previous_family, current_family):
     matrix = instance["setups_matrix"]
 
     if (previous_family, current_family) in matrix:
-        return matrix[(previous_family, current_family)]
+        return round_up_to_bucket(matrix[(previous_family, current_family)])
 
     if previous_family == current_family:
-        return 5
+        return round_up_to_bucket(5)
 
-    return 30
+    return round_up_to_bucket(30)
 
 # ============================================================
 # TIME SIMULATION
@@ -237,21 +279,19 @@ def schedule_with_lunch(start_time, duration, lunch_start, lunch_end):
     if duration <= 0:
         return start_time, start_time
 
+    if lunch_start <= start_time < lunch_end:
+        start_time = lunch_end
+
     end_time = start_time + duration
 
-    if end_time <= lunch_start or start_time >= lunch_end:
-        return start_time, end_time
-
-    if start_time < lunch_start and lunch_start - start_time <= TIME_BUCKET_MIN:
-        start_time = lunch_end
-        end_time = start_time + duration
-        return start_time, end_time
+    if start_time < lunch_start and end_time > lunch_start:
+        end_time += lunch_end - lunch_start
 
     return start_time, end_time
 
+
 def simulate_time_schedule(solution, instance):
     refs_by_id = create_refs_by_id(instance)
-
     operations = []
 
     sorted_solution = sorted(
@@ -287,14 +327,10 @@ def simulate_time_schedule(solution, instance):
                 continue
 
             ref = refs_by_id[ref_id]
+            master_boxes = item.get("master_boxes", 0)
 
             if previous_family is not None:
-                setup_time = get_setup(
-                    instance,
-                    previous_family,
-                    ref["family"]
-                )
-
+                setup_time = get_setup(instance, previous_family, ref["family"])
                 setup_start = current_time
                 setup_end = setup_start + setup_time
 
@@ -302,6 +338,7 @@ def simulate_time_schedule(solution, instance):
                     "day": day,
                     "line": line,
                     "ref_id": item["ref_id"],
+                    "master_boxes": master_boxes,
                     "operation": "setup",
                     "start": setup_start,
                     "end": setup_end,
@@ -310,12 +347,7 @@ def simulate_time_schedule(solution, instance):
 
                 current_time = setup_end
 
-            production_time = get_production_time(
-                ref,
-                line,
-                item["master_boxes"]
-            ) or 0
-
+            production_time = get_production_time(ref, line, master_boxes) or 0
             prod_start, prod_end = schedule_with_lunch(
                 current_time,
                 production_time,
@@ -329,47 +361,35 @@ def simulate_time_schedule(solution, instance):
                 "day": day,
                 "line": line,
                 "ref_id": item["ref_id"],
+                "master_boxes": master_boxes,
                 "operation": "production",
                 "start": prod_start,
                 "end": prod_end,
                 "operators": prod_ops,
             })
 
-            finishing_time = get_finishing_time(
-                ref,
-                line,
-                item["master_boxes"]
-            ) or 0
+            if line == "L1" and production_time > FINISHING_DELAY_L1_MIN:
+                finish_start = prod_start + FINISHING_DELAY_L1_MIN
+                finish_end = prod_end
+                finish_ops = get_finishing_operators(ref, line)
 
-            if line == "L1":
-                finish_start = prod_start + get_finishing_delay(line)
-            else:
-                finish_start = prod_end
-
-            finish_start, finish_end = schedule_with_lunch(
-                finish_start,
-                finishing_time,
-                FINISHING_LUNCH_START,
-                FINISHING_LUNCH_END
-            )
-
-            finish_ops = get_finishing_operators(ref, line)
-
-            operations.append({
-                "day": day,
-                "line": line,
-                "ref_id": item["ref_id"],
-                "operation": "finishing",
-                "start": finish_start,
-                "end": finish_end,
-                "operators": finish_ops,
-            })
+                operations.append({
+                    "day": day,
+                    "line": line,
+                    "ref_id": item["ref_id"],
+                    "master_boxes": master_boxes,
+                    "operation": "finishing",
+                    "start": finish_start,
+                    "end": finish_end,
+                    "operators": finish_ops,
+                })
 
             current_time = prod_end
             previous_family = ref["family"]
             previous_prod_ops = prod_ops
 
     return operations
+
 
 def calculate_operator_usage_by_time(operations, standard_operators):
     usage = {}
@@ -409,6 +429,7 @@ def evaluate_solution(solution, instance):
    
 
     total_penalty = 0
+    infeasible_solution = False
 
     invalid_assignments = 0
     capacity_violations = 0
@@ -420,6 +441,11 @@ def evaluate_solution(solution, instance):
     postponed_orders = 0
     postponement_penalty = 0
     postponed_by_due_date = {}
+    scheduled_kg = 0
+    postponed_kg = 0
+    scheduled_economic_value = 0
+    postponed_economic_value = 0
+    monday_violations = 0
 
     sorted_solution = sorted(
         enumerate(solution),
@@ -436,14 +462,16 @@ def evaluate_solution(solution, instance):
         ref_id = _normalize_ref_id(item["ref_id"])
 
         if ref_id not in refs_by_id:
-            total_penalty += INVALID_LINE_PENALTY
             invalid_assignments += 1
+            infeasible_solution = True
             continue
 
         ref = refs_by_id[ref_id]
 
         if item.get("postponed"):
             delivery_date = item.get("delivery_date")
+            postponed_kg += get_order_kg(item, ref)
+            postponed_economic_value += get_order_economic_value(item, ref)
             penalty = get_postponement_penalty(
                 item["master_boxes"]
             )
@@ -460,8 +488,14 @@ def evaluate_solution(solution, instance):
         key = (day, line)
 
         if line not in valid_lines_for_ref(ref):
-            total_penalty += INVALID_LINE_PENALTY
             invalid_assignments += 1
+            infeasible_solution = True
+            continue
+
+        if ref.get("monday_forbidden") and day in set(instance.get("monday_days", [])):
+            invalid_assignments += 1
+            monday_violations += 1
+            infeasible_solution = True
             continue
 
         production_time = get_production_time(
@@ -471,9 +505,12 @@ def evaluate_solution(solution, instance):
         )
 
         if production_time is None:
-            total_penalty += INVALID_LINE_PENALTY
             invalid_assignments += 1
+            infeasible_solution = True
             continue
+
+        scheduled_kg += get_order_kg(item, ref)
+        scheduled_economic_value += get_order_economic_value(item, ref)
 
         previous_family = last_family_by_day_line.get(key)
 
@@ -566,9 +603,17 @@ def evaluate_solution(solution, instance):
 
     total_penalty += hourly_operator_penalty
 
+
+    economic_value_reward = scheduled_economic_value * ECONOMIC_VALUE_REWARD
+    total_penalty -= economic_value_reward
+
+    if infeasible_solution:
+        total_penalty = float("inf")
+
     metrics = {
         "total_penalty": total_penalty,
         "invalid_assignments": invalid_assignments,
+        "infeasible_solution": infeasible_solution,
         "capacity_violations": capacity_violations,
         "delay_days_total": delay_days_total,
         "operator_violations": operator_violations,
@@ -593,6 +638,12 @@ def evaluate_solution(solution, instance):
         "operator_excess_by_time": operator_excess_by_time,
         "peak_operators": peak_operators,
         "hourly_operator_penalty": hourly_operator_penalty,
+        "scheduled_kg": scheduled_kg,
+        "postponed_kg": postponed_kg,
+        "scheduled_economic_value": scheduled_economic_value,
+        "postponed_economic_value": postponed_economic_value,
+        "economic_value_reward": economic_value_reward,
+        "monday_violations": monday_violations,
     }
 
     return metrics

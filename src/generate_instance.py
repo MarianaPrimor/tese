@@ -218,6 +218,16 @@ def _read_references_sheet(ws):
             "rate_L2_finish": ["tempo_l2_acab_min cadencia de l2", "tempo l2 acab min cadencia de l2", "rate l2 finish"],
             "ops_L2_finish": ["operadores_nec_l2_acab", "operadores nec l2 acab"],
             "ops_L2_prod": ["operadores_nec_l2_prod", "operadores nec l2 prod"],
+            "kg_per_master_box": ["kg", "kg por caixa", "kg per master box"],
+            "economic_value_per_master_box": ["euros", "valor economico", "economic value", "economic value per master box"],
+            "needs_oven": ["precisa_forno", "precisa forno", "requires oven"],
+            "monday_forbidden": [
+                "nao_produzir_segunda",
+                "nao produzir segunda",
+                "nao pode segunda",
+                "monday forbidden",
+                "cannot monday",
+            ],
         }
     )
 
@@ -234,6 +244,13 @@ def _read_references_sheet(ws):
         name = _safe_text(_get_row_value(row, indexes, "name"), default=ref_id)
         cakes_per_box = _safe_int(_get_row_value(row, indexes, "cakes_per_box"), default=1)
         family = _safe_text(_get_row_value(row, indexes, "family"), default="no_family").lower()
+        kg_per_master_box = _safe_float(_get_row_value(row, indexes, "kg_per_master_box"), default=0)
+        economic_value_per_master_box = _safe_float(_get_row_value(row, indexes, "economic_value_per_master_box"), default=0)
+        needs_oven = _is_yes(_get_row_value(row, indexes, "needs_oven"))
+        monday_forbidden = _safe_int(
+            _get_row_value(row, indexes, "monday_forbidden"),
+            default=0
+        ) == 1
 
         can_L1 = _is_yes(_get_row_value(row, indexes, "can_L1"))
         rate_L1_prod = _safe_float(_get_row_value(row, indexes, "rate_L1_prod"))
@@ -272,11 +289,25 @@ def _read_references_sheet(ws):
             ops_L2_prod = 0
             ops_L2_finish = 0
 
+        fixed_line = None
+        if can_L1 and _positive_value(rate_L1_prod):
+            fixed_line = "L1"
+        elif can_L2 and _positive_value(rate_L2_prod):
+            fixed_line = "L2"
+
+        if can_L1 and can_L2:
+            incomplete_refs.append((ref_id, "both L1 and L2 are available; fixed_line set to L1"))
+
         refs.append({
             "id": ref_id,
             "name": name,
             "family": family,
             "cakes_per_box": cakes_per_box,
+            "kg_per_master_box": kg_per_master_box,
+            "economic_value_per_master_box": economic_value_per_master_box,
+            "needs_oven": needs_oven,
+            "monday_forbidden": monday_forbidden,
+            "fixed_line": fixed_line,
             "lead_time_L0_days": _safe_int(_get_row_value(row, indexes, "lead_time_L0_days"), default=1),
             "can_L1": can_L1,
             "rate_L1_prod": rate_L1_prod,
@@ -1147,6 +1178,12 @@ def load_real_instance(
             structure["line_capacity_min"]
             - structure["end_of_day_cleaning_time_min"]
         ),
+        "time_bucket_min": 30,
+        "monday_days": [
+            i + 1
+            for i, working_day in enumerate(working_days)
+            if working_day.weekday() == 0
+        ],
 
         "refs": refs,
         "families": families,
