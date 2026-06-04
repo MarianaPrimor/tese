@@ -426,6 +426,26 @@ def light_table_style(df):
     )
 
 
+def render_interactive_table(df, key, height=420):
+    st.dataframe(
+        df,
+        width="stretch",
+        hide_index=True,
+        height=height,
+    )
+
+    csv_data = df.to_csv(index=False).encode("utf-8-sig")
+
+    st.download_button(
+        label="Descarregar tabela em CSV",
+        data=csv_data,
+        file_name=f"{key}.csv",
+        mime="text/csv",
+        key=f"download_{key}",
+        width="content",
+    )
+
+
 st.set_page_config(
     page_title="Planeamento de Produção - Doceleia",
     layout="wide",
@@ -556,6 +576,46 @@ st.markdown(
     [data-testid="stFileUploader"] button * {
         color: #ffffff !important;
     }
+    .kaizen-table-wrap {
+        width: 100%;
+        overflow: auto;
+        background: #ffffff;
+        border: 1px solid #cfd9e6;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(21, 62, 126, 0.08);
+        margin-bottom: 24px;
+    }
+    table.kaizen-table {
+        border-collapse: collapse;
+        width: max-content;
+        min-width: 100%;
+        background: #ffffff;
+        color: #172033;
+        font-size: 13px;
+    }
+    table.kaizen-table th {
+        position: sticky;
+        top: 0;
+        z-index: 2;
+        background: #153e7e;
+        color: #ffffff !important;
+        padding: 10px 12px;
+        border: 1px solid #153e7e;
+        text-align: left;
+        white-space: nowrap;
+        font-weight: 800;
+    }
+    table.kaizen-table td {
+        background: #ffffff;
+        color: #172033 !important;
+        padding: 9px 12px;
+        border: 1px solid #d9e0ea;
+        vertical-align: top;
+        white-space: nowrap;
+    }
+    table.kaizen-table tr:nth-child(even) td {
+        background: #f4f7fb;
+    }
     .stButton button,
     button[kind="primary"],
     button[kind="secondary"],
@@ -614,37 +674,6 @@ st.markdown(
     div[data-testid="stMetricValue"] * {
         color: #153e7e !important;
         font-weight: 900 !important;
-    }
-    div[data-testid="stDataFrame"],
-    div[data-testid="stDataFrame"] div,
-    div[data-testid="stDataFrame"] table,
-    div[data-testid="stTable"],
-    div[data-testid="stTable"] table {
-        background-color: #ffffff !important;
-        color: #172033 !important;
-    }
-    div[data-testid="stDataFrame"] th,
-    div[data-testid="stDataFrame"] td,
-    div[data-testid="stTable"] th,
-    div[data-testid="stTable"] td {
-        color: #172033 !important;
-        background-color: #ffffff !important;
-        border-color: #d9e0ea !important;
-    }
-    div[data-testid="stDataFrame"] thead tr th,
-    div[data-testid="stTable"] thead tr th {
-        background-color: #153e7e !important;
-        color: #ffffff !important;
-    }
-    div[data-testid="stDataFrame"] [role="grid"],
-    div[data-testid="stDataFrame"] [role="columnheader"],
-    div[data-testid="stDataFrame"] [role="gridcell"] {
-        background-color: #ffffff !important;
-        color: #172033 !important;
-    }
-    div[data-testid="stDataFrame"] [role="columnheader"] {
-        background-color: #153e7e !important;
-        color: #ffffff !important;
     }
     .st-emotion-cache-1r6slb0,
     .st-emotion-cache-1wmy9hl,
@@ -738,10 +767,9 @@ sequencing_df["Estado"] = sequencing_df["Estado"].replace({
     "Near limit": "Perto do limite",
     "OK": "OK",
 })
-st.dataframe(
-    sequencing_df.style.apply(highlight_status, axis=1),
-    width="stretch",
-    hide_index=True,
+render_interactive_table(
+    sequencing_df,
+    key="sequencia_diaria_producao",
     height=420,
 )
 
@@ -751,10 +779,9 @@ product_matrix_display_df = product_matrix_df.rename(columns={
     "Day": "Dia",
     "Line": "Linha",
 })
-st.dataframe(
-    light_table_style(product_matrix_display_df),
-    width="stretch",
-    hide_index=True,
+render_interactive_table(
+    product_matrix_display_df,
+    key="quantidade_valor_produto_dia_linha",
     height=520,
 )
 
@@ -812,10 +839,9 @@ else:
         "Overloaded": "Sobrecarga",
         "OK": "OK",
     })
-    st.dataframe(
-        operators_df.style.apply(highlight_status, axis=1),
-        width="stretch",
-        hide_index=True,
+    render_interactive_table(
+        operators_df,
+        key="ocupacao_operadores_horario",
         height=650,
     )
 
@@ -848,10 +874,10 @@ else:
         "Capacity excess (min)": "Excesso de capacidade (min)",
         "Utilization (%)": "Utilização (%)",
     })
-    st.dataframe(
-        light_table_style(capacity_display_df),
-        width="stretch",
-        hide_index=True,
+    render_interactive_table(
+        capacity_display_df,
+        key="utilizacao_capacidade_linha",
+        height=420,
     )
 
 st.subheader("Plano detalhado")
@@ -875,10 +901,9 @@ plan_display_df["Estado"] = plan_display_df["Estado"].replace({
     "Scheduled": "Planeado",
     "Postponed": "Adiado",
 })
-st.dataframe(
-    light_table_style(plan_display_df),
-    width="stretch",
-    hide_index=True,
+render_interactive_table(
+    plan_display_df,
+    key="plano_detalhado",
     height=520,
 )
 
@@ -902,9 +927,8 @@ else:
         "finishing": "acabamento",
         "setup": "setup",
     })
-    st.dataframe(
-        light_table_style(operations_display_df),
-        width="stretch",
-        hide_index=True,
+    render_interactive_table(
+        operations_display_df,
+        key="operacoes_horario",
         height=520,
     )
