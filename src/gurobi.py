@@ -1,5 +1,6 @@
 import gurobipy as gp
 from gurobipy import GRB
+import time
 
 from generate_instance import load_real_instance, calculate_production_time
 from evaluator import (
@@ -7,6 +8,14 @@ from evaluator import (
     valid_lines_for_ref,
     evaluate_solution,
     print_metrics,
+    get_valid_days_for_ref,
+    get_production_time as evaluator_get_production_time,
+    get_setup,
+    DELAY_PENALTY,
+    CAPACITY_PENALTY,
+    SETUP_PENALTY,
+    POSTPONEMENT_PENALTY,
+    ECONOMIC_VALUE_REWARD,
 )
 
 
@@ -57,7 +66,8 @@ def _selected_assignment(x, order, lines, days):
     return None, None
 
 
-def solve_with_gurobi(instance):
+def solve_simplified_with_gurobi(instance):
+    start_time = time.perf_counter()
     model = gp.Model("doceleia_scheduling")
 
     orders = list(range(len(instance["demand"])))
@@ -336,6 +346,7 @@ def solve_with_gurobi(instance):
 
         print("\n=== EVALUATOR CHECK ON GUROBI SOLUTION ===")
         evaluator_metrics = evaluate_solution(gurobi_solution, instance)
+        evaluator_metrics["computation_time_sec"] = time.perf_counter() - start_time
         print_metrics(evaluator_metrics)
         print("\n=== CAPACITY EXCESS ONLY ===")
 
@@ -347,7 +358,328 @@ def solve_with_gurobi(instance):
                         f"excess {capacity_excess[l, d].X:.2f} min"
                     )
 
+        return gurobi_solution, evaluator_metrics
+
+    return None, None
+
+
+def solve_with_gurobi(instance, time_limit=1800, verbose=True):
+    start_time = time.perf_counter()
+    model = gp.Model("doceleia_full_small")
+
+    if not verbose:
+        model.Params.OutputFlag = 0
+
+    model.Params.TimeLimit = time_limit
+
+    orders = list(range(len(instance["demand"])))
+    lines = instance["final_lines"]
+    days = list(range(1, instance["n_days"] + 1))
+    positions = list(range(1, len(orders) + 1))
+    refs_by_id = create_refs_by_id(instance)
+
+    x = model.addVars(
+        orders,
+        lines,
+        days,
+        positions,
+        vtype=GRB.BINARY,
+        name="x"
+    )
+    postponed = model.addVars(
+        orders,
+        vtype=GRB.BINARY,
+        name="postponed"
+    )
+    delay = model.addVars(
+        orders,
+        lb=0,
+        vtype=GRB.CONTINUOUS,
+        name="delay"
+    )
+    capacity_excess = model.addVars(
+        lines,
+        days,
+        lb=0,
+        vtype=GRB.CONTINUOUS,
+        name="capacity_excess"
+    )
+
+    pair = {}
+
+    for i in orders:
+        for j in orders:
+            if i == j:
+                continue
+
+            for l in lines:
+                for d in days:
+                    for p in positions[1:]:
+                        pair[i, j, l, d, p] = model.addVar(
+                            vtype=GRB.BINARY,
+                            name=f"pair_{i}_{j}_{l}_{d}_{p}"
+                        )
+
+    model.update()
+
+    for o in orders:
+        model.addConstr(
+            gp.quicksum(
+                x[o, l, d, p]
+                for l in lines
+                for d in days
+                for p in positions
+            ) + postponed[o] == 1,
+            name=f"assign_or_postpone_{o}"
+        )
+
+    for o in orders:
+        order = instance["demand"][o]
+        ref = refs_by_id[str(order["ref_id"]).strip()]
+        valid_lines = valid_lines_for_ref(ref)
+        valid_days = get_valid_days_for_ref(instance, ref)
+
+        for l in lines:
+            for d in days:
+                if l not in valid_lines or d not in valid_days:
+                    for p in positions:
+                        model.addConstr(
+                            x[o, l, d, p] == 0,
+                            name=f"infeasible_{o}_{l}_{d}_{p}"
+                        )
+
+    for l in lines:
+        for d in days:
+            for p in positions:
+                model.addConstr(
+                    gp.quicksum(x[o, l, d, p] for o in orders) <= 1,
+                    name=f"one_order_per_position_{l}_{d}_{p}"
+                )
+
+            for p in positions[:-1]:
+                model.addConstr(
+                    gp.quicksum(x[o, l, d, p + 1] for o in orders)
+                    <= gp.quicksum(x[o, l, d, p] for o in orders),
+                    name=f"no_gaps_{l}_{d}_{p}"
+                )
+
+    for o in orders:
+        order = instance["demand"][o]
+        delivery_date = order["delivery_date"]
+
+        production_day = gp.quicksum(
+            d * x[o, l, d, p]
+            for l in lines
+            for d in days
+            for p in positions
+        )
+
+        model.addConstr(
+            delay[o] >= production_day - delivery_date,
+            name=f"delay_{o}"
+        )
+
+    for i in orders:
+        for j in orders:
+            if i == j:
+                continue
+
+            for l in lines:
+                for d in days:
+                    for p in positions[1:]:
+                        model.addConstr(
+                            pair[i, j, l, d, p] <= x[i, l, d, p - 1],
+                            name=f"pair_prev_{i}_{j}_{l}_{d}_{p}"
+                        )
+                        model.addConstr(
+                            pair[i, j, l, d, p] <= x[j, l, d, p],
+                            name=f"pair_curr_{i}_{j}_{l}_{d}_{p}"
+                        )
+                        model.addConstr(
+                            pair[i, j, l, d, p]
+                            >= x[i, l, d, p - 1] + x[j, l, d, p] - 1,
+                            name=f"pair_link_{i}_{j}_{l}_{d}_{p}"
+                        )
+
+    setup_expr = gp.LinExpr()
+
+    for l in lines:
+        for d in days:
+            production_terms = []
+            setup_terms = []
+
+            for o in orders:
+                order = instance["demand"][o]
+                ref = refs_by_id[str(order["ref_id"]).strip()]
+                production_time = evaluator_get_production_time(
+                    ref,
+                    l,
+                    order["master_boxes"]
+                )
+
+                if production_time is not None:
+                    for p in positions:
+                        production_terms.append(production_time * x[o, l, d, p])
+
+            for i in orders:
+                ref_i = refs_by_id[str(instance["demand"][i]["ref_id"]).strip()]
+
+                for j in orders:
+                    if i == j:
+                        continue
+
+                    ref_j = refs_by_id[str(instance["demand"][j]["ref_id"]).strip()]
+                    setup_time = get_setup(
+                        instance,
+                        ref_i["family"],
+                        ref_j["family"]
+                    )
+
+                    for p in positions[1:]:
+                        term = setup_time * pair[i, j, l, d, p]
+                        setup_terms.append(term)
+                        setup_expr += term
+
+            model.addConstr(
+                gp.quicksum(production_terms)
+                + gp.quicksum(setup_terms)
+                <= instance["available_line_time_min"] + capacity_excess[l, d],
+                name=f"capacity_{l}_{d}"
+            )
+
+    postponement_expr = gp.LinExpr()
+    economic_reward_expr = gp.LinExpr()
+
+    for o in orders:
+        order = instance["demand"][o]
+        ref = refs_by_id[str(order["ref_id"]).strip()]
+        master_boxes = order["master_boxes"]
+        economic_value = (
+            master_boxes
+            * (ref.get("economic_value_per_master_box") or 0)
+        )
+
+        postponement_expr += master_boxes * POSTPONEMENT_PENALTY * postponed[o]
+        economic_reward_expr += economic_value * gp.quicksum(
+            x[o, l, d, p]
+            for l in lines
+            for d in days
+            for p in positions
+        )
+
+    objective = (
+        DELAY_PENALTY * gp.quicksum(delay[o] for o in orders)
+        + CAPACITY_PENALTY * gp.quicksum(
+            capacity_excess[l, d]
+            for l in lines
+            for d in days
+        )
+        + SETUP_PENALTY * setup_expr
+        + postponement_expr
+        - ECONOMIC_VALUE_REWARD * economic_reward_expr
+    )
+
+    model.setObjective(objective, GRB.MINIMIZE)
+
+    print("Full Gurobi model")
+    print("Orders/lots:", len(orders))
+    print("Lines:", lines)
+    print("Days:", days)
+    print("Positions:", len(positions))
+
+    model.optimize()
+
+    if model.SolCount == 0:
+        raise RuntimeError(f"Gurobi did not find a solution. Status: {model.Status}")
+
+    solution = []
+
+    for l in lines:
+        for d in days:
+            for p in positions:
+                for o in orders:
+                    if x[o, l, d, p].X > 0.5:
+                        order = instance["demand"][o]
+                        solution.append({
+                            "order_id": o,
+                            "ref_id": str(order["ref_id"]).strip(),
+                            "master_boxes": order["master_boxes"],
+                            "delivery_date": order["delivery_date"],
+                            "delivery_calendar_date": order.get("delivery_calendar_date"),
+                            "adjusted_delivery_date": order.get("adjusted_delivery_date"),
+                            "priority": order.get("priority", "Medium"),
+                            "day": d,
+                            "line": l,
+                            "postponed": False,
+                        })
+
+    for o in orders:
+        if postponed[o].X > 0.5:
+            order = instance["demand"][o]
+            solution.append({
+                "order_id": o,
+                "ref_id": str(order["ref_id"]).strip(),
+                "master_boxes": order["master_boxes"],
+                "delivery_date": order["delivery_date"],
+                "delivery_calendar_date": order.get("delivery_calendar_date"),
+                "adjusted_delivery_date": order.get("adjusted_delivery_date"),
+                "priority": order.get("priority", "Medium"),
+                "day": None,
+                "line": None,
+                "postponed": True,
+            })
+
+    metrics = evaluate_solution(solution, instance)
+    metrics["computation_time_sec"] = time.perf_counter() - start_time
+
+    print("\n=== FULL GUROBI SUMMARY ===")
+    print(f"Gurobi objective: {model.ObjVal:.2f}")
+    print(f"Gurobi best bound: {model.ObjBound:.2f}")
+    print(f"Gurobi MIP gap: {model.MIPGap * 100:.2f}%")
+    print_metrics(metrics)
+
+    return solution, metrics, {
+        "objective": model.ObjVal,
+        "best_bound": model.ObjBound,
+        "mip_gap": model.MIPGap,
+        "status": model.Status,
+    }
 
 if __name__ == "__main__":
     instance = load_real_instance("../Inputs_Doceleia.xlsx")
-    solve_with_gurobi(instance)
+
+    solution, metrics, info = solve_with_gurobi(
+        instance,
+        time_limit=1800,
+        verbose=True,
+    )
+
+    print("\n=== GUROBI OPTIMAL SCHEDULE ===")
+    for item in solution:
+        status = (
+            "POSTPONED"
+            if item.get("postponed")
+            else f"day {item['day']} | {item['line']}"
+        )
+
+        print(
+            f"{item['order_id']:02d}. "
+            f"{item['ref_id']} | "
+            f"{item['master_boxes']} boxes | "
+            f"{status} | "
+            f"delivery {item['delivery_date']}"
+        )
+
+    print("\n=== GUROBI METRICS FOR COMPARISON ===")
+    print(f"Computation time: {metrics['computation_time_sec']:.2f} sec")
+    print(f"Total penalty: {metrics['total_penalty']:.2f}")
+    print(f"Total economic reward: {metrics['economic_value_reward']:.2f}")
+    print(f"Scheduled economic value: {metrics['scheduled_economic_value']:.2f}")
+    print(f"Postponed economic value: {metrics['postponed_economic_value']:.2f}")
+    print(f"Total capacity excess: {metrics['total_capacity_excess']:.2f} min")
+    print(f"Total setup time: {metrics['setup_total_min']:.2f} min")
+    print(f"Total delay: {metrics['delay_days_total']} days")
+    print(f"Number of postponed orders: {metrics['postponed_orders']}")
+    print(f"Gurobi objective: {info['objective']:.2f}")
+    print(f"Gurobi best bound: {info['best_bound']:.2f}")
+    print(f"Gurobi MIP gap: {info['mip_gap'] * 100:.2f}%")

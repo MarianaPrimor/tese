@@ -1049,14 +1049,13 @@ def _split_large_orders(demand, refs, final_lines, available_line_time_min):
     return split_demand
 
 def load_real_instance(
-    excel_path="Inputs_Doceleia.xlsx",
+    excel_path="Inputs_Doceleia_small.xlsx",
     n_synthetic_orders=15,
     seed=42
 ):
     print(f"Loading instance from {excel_path}...")
 
     wb = openpyxl.load_workbook(excel_path, data_only=True)
-
     structure = _read_structure_sheet(wb["1_ESTRUTURA"])
 
     holidays = set()
@@ -1349,6 +1348,6 @@ def print_instance_summary(instance):
 
 
 if __name__ == "__main__":
-    instance = load_real_instance(excel_path="../Inputs_Doceleia.xlsx")
+    instance = load_real_instance(excel_path="../Inputs_Doceleia_small.xlsx")
     print_instance_summary(instance)
 

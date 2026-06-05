@@ -1,5 +1,6 @@
 from copy import deepcopy
 import random
+import time
 
 from generate_instance import load_real_instance
 from evaluator import (
@@ -233,62 +234,6 @@ def calculate_group_time_for_repair(genes, refs_by_id, instance, line):
 
     return total_time, timed_genes
 
-
-def repair_capacity(solution, instance):
-    repaired_solution = deepcopy(solution)
-
-    refs_by_id = create_refs_by_id(instance)
-    available_capacity = instance["available_line_time_min"]
-
-    groups = {}
-
-    for gene in repaired_solution:
-        if gene.get("postponed"):
-            continue
-
-        key = (gene.get("day"), gene.get("line"))
-        groups.setdefault(key, []).append(gene)
-
-    for key, genes in groups.items():
-        day, line = key
-
-        if day is None or line is None:
-            continue
-
-        total_time, feasible_genes = calculate_group_time_for_repair(
-            genes,
-            refs_by_id,
-            instance,
-            line
-        )
-
-        while total_time > available_capacity and feasible_genes:
-            gene, ref, operation_time = min(
-                feasible_genes,
-                key=lambda x: (
-                    -(x[0].get("delivery_date", instance["n_days"]) or instance["n_days"]),
-                    get_economic_value_for_repair(x[0], x[1]),
-                    -x[2],
-                )
-            )
-
-            gene["postponed"] = True
-            gene["day"] = None
-            gene["line"] = None
-
-            genes = [
-                group_gene for group_gene in genes
-                if not group_gene.get("postponed")
-            ]
-            total_time, feasible_genes = calculate_group_time_for_repair(
-                genes,
-                refs_by_id,
-                instance,
-                line
-            )
-
-    return repaired_solution
-
 # ============================================================
 # GENETIC ALGORITHM
 # ============================================================
@@ -302,6 +247,7 @@ def run_genetic_algorithm(
     tournament_size=3,
     seed=0,
 ):
+    start_time = time.perf_counter()
     random.seed(seed)
 
     population = generate_initial_population(instance, population_size)
@@ -372,6 +318,7 @@ def run_genetic_algorithm(
 
     best_solution = enforce_hard_constraints(best_solution, instance)
     best_metrics = evaluate_solution(best_solution, instance)
+    best_metrics["computation_time_sec"] = time.perf_counter() - start_time
 
     initial_penalty = initial_best_metrics["total_penalty"]
     final_penalty = best_metrics["total_penalty"]

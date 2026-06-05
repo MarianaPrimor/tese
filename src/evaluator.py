@@ -666,19 +666,24 @@ def print_solution(solution):
 def print_metrics(metrics):
     print("\n=== SOLUTION METRICS ===")
 
+    if "computation_time_sec" in metrics:
+        print(f"Computation time: {metrics['computation_time_sec']:.2f} sec")
+
     print(f"Total penalty: {metrics['total_penalty']:.2f}")
+    print(f"Total economic reward: {metrics.get('economic_value_reward', 0):.2f}")
+    print(f"Scheduled economic value: {metrics.get('scheduled_economic_value', 0):.2f}")
+    print(f"Postponed economic value: {metrics.get('postponed_economic_value', 0):.2f}")
+    print(f"Total capacity excess: {metrics['total_capacity_excess']:.2f} min")
+    print(f"Total setup time: {metrics['setup_total_min']:.2f} min")
+    print(f"Total delay: {metrics['delay_days_total']} days")
+    print(f"Postponed orders: {metrics['postponed_orders']}")
     print(f"Invalid assignments: {metrics['invalid_assignments']}")
     print(f"Capacity violations: {metrics['capacity_violations']}")
-    print(f"Total capacity excess: {metrics['total_capacity_excess']:.2f} min")
-    print(f"Total delay: {metrics['delay_days_total']} days")
     print(f"Operator violations: {metrics['operator_violations']}")
     print(f"Total operator excess: {metrics['total_operator_excess']:.2f}")
     print(f"Peak operators by time: {metrics['peak_operators']}")
     print(f"Total hourly operator excess: {metrics['total_operator_excess_by_time']:.2f}")
-    print(f"Total setup time: {metrics['setup_total_min']:.2f} min")
-    print(f"Postponed orders: {metrics['postponed_orders']}")
     print(f"Postponement penalty: {metrics['postponement_penalty']:.2f}")
-    print(f"Postponed by due date: {metrics['postponed_by_due_date']}")
     print(f"Hourly operator penalty: {metrics['hourly_operator_penalty']:.2f}")
     print("\nProduction time by day/line:")
 
