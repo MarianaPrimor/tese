@@ -1,13 +1,12 @@
 import optuna
-import time
 from generate_instance import load_real_instance
 from geneticalgorithm import run_genetic_algorithm
 
 # ── Configuration ─────────────────────────────────────────────
 INSTANCE_PATH  = "../Inputs_Doceleia.xlsx"
-N_TRIALS       = 50
+N_TRIALS       = 60
 MAX_GENERATIONS = 200
-SEED_FOR_GA    = 42   # fixed seed so each trial is reproducible
+SEEDS_FOR_GA   = [0, 42, 99]
 
 instance = load_real_instance(INSTANCE_PATH)
 
@@ -19,20 +18,25 @@ def objective(trial):
     mutation_rate   = trial.suggest_float("mutation_rate", 0.05, 0.15)
     stagnation_k    = trial.suggest_int("stagnation_k", 10, 30)
 
-    # Run the GA with these parameters
-    _, metrics, _ = run_genetic_algorithm(
-        instance,
-        population_size  = population_size,
-        mutation_rate    = mutation_rate,
-        stagnation_k     = stagnation_k,
-        generations      = MAX_GENERATIONS,
-        elite_size       = 5,
-        tournament_size  = 3,
-        seed             = SEED_FOR_GA,
-        verbose          = False,
-    )
+    # Run the GA with these parameters using several random seeds
+    penalties = []
 
-    return metrics["total_penalty"]
+    for seed in SEEDS_FOR_GA:
+        _, metrics, _ = run_genetic_algorithm(
+            instance,
+            population_size  = population_size,
+            mutation_rate    = mutation_rate,
+            stagnation_k     = stagnation_k,
+            generations      = MAX_GENERATIONS,
+            elite_size       = 5,
+            tournament_size  = 3,
+            seed             = seed,
+            verbose          = False,
+        )
+
+        penalties.append(metrics["total_penalty"])
+
+    return sum(penalties) / len(penalties)
 
 # ── Run the study ──────────────────────────────────────────────
 optuna.logging.set_verbosity(optuna.logging.INFO)
