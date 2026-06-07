@@ -264,12 +264,12 @@ def get_setup(instance, previous_family, current_family):
     matrix = instance["setups_matrix"]
 
     if (previous_family, current_family) in matrix:
-        return round_up_to_bucket(matrix[(previous_family, current_family)])
+        return matrix[(previous_family, current_family)]
 
-    if previous_family == current_family:
-        return round_up_to_bucket(5)
-
-    return round_up_to_bucket(30)
+    raise KeyError(
+        f"Missing setup time from family '{previous_family}' "
+        f"to family '{current_family}' in setups_matrix."
+    )
 
 # ============================================================
 # TIME SIMULATION
@@ -712,6 +712,182 @@ def print_metrics(metrics):
             f"{metrics['standard_operators']} standard / "
             f"{excess} excess"
         )
+
+
+def _format_minutes(value):
+    value = int(round(value))
+    hours = value // 60
+    minutes = value % 60
+    return f"{hours:02d}:{minutes:02d}"
+
+
+def print_validation_report(solution, instance, title="VALIDATION REPORT"):
+    refs_by_id = create_refs_by_id(instance)
+    metrics = evaluate_solution(solution, instance)
+
+    print("\n" + "=" * 70)
+    print(title)
+    print("=" * 70)
+
+    print("\n1. ASSIGNMENT: EACH ORDER SCHEDULED ONCE OR POSTPONED")
+    seen_order_ids = {}
+
+    for item in solution:
+        order_id = item.get("order_id")
+        seen_order_ids[order_id] = seen_order_ids.get(order_id, 0) + 1
+
+    for order_id in range(len(instance["demand"])):
+        count = seen_order_ids.get(order_id, 0)
+        status = "OK" if count == 1 else "ERROR"
+        print(f"  Order {order_id:02d}: occurrences in solution = {count} -> {status}")
+
+    print("\n2. LINE COMPATIBILITY AND MONDAY RESTRICTION")
+
+    for item in sorted(solution, key=lambda x: x.get("order_id", 0)):
+        ref_id = str(item["ref_id"]).strip()
+        ref = refs_by_id.get(ref_id)
+
+        if ref is None:
+            print(f"  Order {item.get('order_id')}: {ref_id} -> ERROR reference not found")
+            continue
+
+        if item.get("postponed"):
+            print(f"  Order {item.get('order_id'):02d}: {ref_id} -> POSTPONED")
+            continue
+
+        valid_lines = valid_lines_for_ref(ref)
+        valid_days = get_valid_days_for_ref(instance, ref)
+        line_ok = item["line"] in valid_lines
+        day_ok = item["day"] in valid_days
+        monday_text = (
+            "monday forbidden"
+            if ref.get("monday_forbidden")
+            else "monday allowed"
+        )
+
+        print(
+            f"  Order {item.get('order_id'):02d}: {ref_id} | "
+            f"line {item['line']} valid {valid_lines} -> {'OK' if line_ok else 'ERROR'} | "
+            f"day {item['day']} valid {valid_days} ({monday_text}) -> {'OK' if day_ok else 'ERROR'}"
+        )
+
+    print("\n3. DELAY CALCULATION")
+
+    for item in sorted(solution, key=lambda x: x.get("order_id", 0)):
+        if item.get("postponed"):
+            print(f"  Order {item.get('order_id'):02d}: POSTPONED -> delay not calculated")
+            continue
+
+        delay = max(0, item["day"] - item["delivery_date"])
+        print(
+            f"  Order {item.get('order_id'):02d}: production day {item['day']} - "
+            f"delivery day {item['delivery_date']} = {delay} delay days"
+        )
+
+    print("\n4. SETUP TRANSITIONS BY DAY AND LINE")
+    sorted_solution = sorted(
+        enumerate(solution),
+        key=lambda x: (
+            x[1].get("day") if x[1].get("day") is not None else instance["n_days"] + 1,
+            x[1].get("line") or "POSTPONED",
+            x[0],
+        )
+    )
+    last_family_by_day_line = {}
+    setup_total = 0
+
+    for _, item in sorted_solution:
+        if item.get("postponed"):
+            continue
+
+        ref = refs_by_id[str(item["ref_id"]).strip()]
+        key = (item["day"], item["line"])
+        previous_family = last_family_by_day_line.get(key)
+        current_family = ref["family"]
+        setup = get_setup(instance, previous_family, current_family)
+        setup_total += setup
+
+        if previous_family is None:
+            transition = f"START -> {current_family}"
+        else:
+            transition = f"{previous_family} -> {current_family}"
+
+        print(
+            f"  Day {item['day']} {item['line']}: "
+            f"{transition} before {item['ref_id']} = {setup:.2f} min"
+        )
+
+        last_family_by_day_line[key] = current_family
+
+    print(f"  Total setup recalculated: {setup_total:.2f} min")
+    print(f"  Total setup from evaluator: {metrics['setup_total_min']:.2f} min")
+
+    print("\n5. DAILY LINE CAPACITY")
+
+    keys = set(metrics["production_time_by_day_line"].keys())
+    keys.update(metrics["setup_time_by_day_line"].keys())
+
+    for key in sorted(keys):
+        production_time = metrics["production_time_by_day_line"].get(key, 0)
+        setup_time = metrics["setup_time_by_day_line"].get(key, 0)
+        total_time = production_time + setup_time
+        excess = metrics["capacity_excess_by_day_line"].get(key, 0)
+        available = instance["available_line_time_min"]
+        status = "OK" if excess == 0 else "PENALIZED"
+
+        print(
+            f"  Day {key[0]} {key[1]}: production {production_time:.2f} + "
+            f"setup {setup_time:.2f} = {total_time:.2f} / "
+            f"{available:.2f} min | excess {excess:.2f} -> {status}"
+        )
+
+    print("\n6. OPERATOR DEMAND BY TIME PERIOD")
+
+    for key, required in sorted(metrics["operators_required_by_time"].items()):
+        day, bucket = key
+        start = bucket * TIME_BUCKET_MIN
+        end = start + TIME_BUCKET_MIN
+        excess = metrics["operator_excess_by_time"].get(key, 0)
+        status = "OK" if excess == 0 else "PENALIZED"
+
+        print(
+            f"  Day {day} {_format_minutes(start)}-{_format_minutes(end)}: "
+            f"{required} required / {metrics['standard_operators']} standard | "
+            f"excess {excess} -> {status}"
+        )
+
+    print("\n7. SAME LINE PRODUCTION OVERLAP CHECK")
+    operations = metrics.get("time_operations", [])
+    production_operations = [
+        op for op in operations
+        if op["operation"] in ["setup", "production"]
+    ]
+    overlap_count = 0
+
+    for i, op_a in enumerate(production_operations):
+        for op_b in production_operations[i + 1:]:
+            same_resource = (
+                op_a["day"] == op_b["day"]
+                and op_a["line"] == op_b["line"]
+            )
+            overlaps = op_a["start"] < op_b["end"] and op_b["start"] < op_a["end"]
+
+            if same_resource and overlaps:
+                overlap_count += 1
+                print(
+                    f"  OVERLAP day {op_a['day']} {op_a['line']}: "
+                    f"{op_a['ref_id']} {op_a['operation']} "
+                    f"{_format_minutes(op_a['start'])}-{_format_minutes(op_a['end'])} "
+                    f"with {op_b['ref_id']} {op_b['operation']} "
+                    f"{_format_minutes(op_b['start'])}-{_format_minutes(op_b['end'])}"
+                )
+
+    if overlap_count == 0:
+        print("  No setup/production overlaps found on the same day and line -> OK")
+    else:
+        print(f"  Total overlaps found: {overlap_count} -> ERROR")
+
+    return metrics
 
 # ============================================================
 # TEST BLOCK

@@ -8,6 +8,7 @@ from evaluator import (
     valid_lines_for_ref,
     evaluate_solution,
     print_metrics,
+    print_validation_report,
     get_valid_days_for_ref,
     get_production_time as evaluator_get_production_time,
     get_setup,
@@ -646,7 +647,7 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
     }
 
 if __name__ == "__main__":
-    instance = load_real_instance("../Inputs_Doceleia.xlsx")
+    instance = load_real_instance("../Inputs_Doceleia_small.xlsx")
 
     solution, metrics, info = solve_with_gurobi(
         instance,
@@ -683,3 +684,9 @@ if __name__ == "__main__":
     print(f"Gurobi objective: {info['objective']:.2f}")
     print(f"Gurobi best bound: {info['best_bound']:.2f}")
     print(f"Gurobi MIP gap: {info['mip_gap'] * 100:.2f}%")
+
+    print_validation_report(
+        solution,
+        instance,
+        title="GUROBI VALIDATION REPORT"
+    )

@@ -623,55 +623,7 @@ def _read_setups_sheet(ws, all_families, family_aliases=None):
             if isinstance(value, (int, float)):
                 matrix[(from_family, to_family)] = float(value)
 
-    DEFAULT_SETUP = 30
-    SAME_FAMILY_SETUP = 5
-    n_estimated = 0
-
-    for f1 in all_families:
-        for f2 in all_families:
-            if (f1, f2) not in matrix:
-                matrix[(f1, f2)] = SAME_FAMILY_SETUP if f1 == f2 else DEFAULT_SETUP
-                n_estimated += 1
-
-    return matrix, n_estimated
-
-
-    for family in all_families:
-        family_aliases[_normalize_label(family)] = family
-
-    header = list(ws.iter_rows(min_row=4, max_row=4, values_only=True))[0]
-
-    column_families = [
-        _canonical_family(c, family_aliases)
-        for c in header[1:]
-    ]
-
-    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, values_only=True):
-        if row[0] is None:
-            continue
-
-        from_family = _canonical_family(row[0], family_aliases)
-
-        for j, to_family in enumerate(column_families):
-            if from_family is None or to_family is None:
-                continue
-
-            value = row[j + 1] if j + 1 < len(row) else None
-
-            if isinstance(value, (int, float)):
-                matrix[(from_family, to_family)] = float(value)
-
-    DEFAULT_SETUP = 30
-    SAME_FAMILY_SETUP = 5
-    n_estimated = 0
-
-    for f1 in all_families:
-        for f2 in all_families:
-            if (f1, f2) not in matrix:
-                matrix[(f1, f2)] = SAME_FAMILY_SETUP if f1 == f2 else DEFAULT_SETUP
-                n_estimated += 1
-
-    return matrix, n_estimated
+    return matrix, 0
 
 
 def _find_header_indexes(ws):
@@ -1049,7 +1001,7 @@ def _split_large_orders(demand, refs, final_lines, available_line_time_min):
     return split_demand
 
 def load_real_instance(
-    excel_path="Inputs_Doceleia_small.xlsx",
+    excel_path="Inputs_Doceleia.xlsx",
     n_synthetic_orders=15,
     seed=42
 ):

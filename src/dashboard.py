@@ -719,7 +719,7 @@ try:
     with st.spinner("A carregar dados e a correr o algoritmo genético..."):
         instance = load_real_instance(excel_source)
         planning_month = get_planning_month(instance)
-        best_solution, best_metrics = run_genetic_algorithm(
+        best_solution, best_metrics, actual_generations = run_genetic_algorithm(
             instance,
             population_size=POPULATION_SIZE,
             generations=GENERATIONS,

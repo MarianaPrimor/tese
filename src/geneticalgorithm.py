@@ -19,11 +19,12 @@ from evaluator import (
 # GENERATING INITIAL POPULATION
 
 
-def generate_initial_population(instance, population_size=100):
+def generate_initial_population(instance, population_size=100, seed=0):
     population = []
 
-    for seed in range(population_size):
-        solution = generate_random_solution(instance, seed=seed)
+    for i in range(population_size):
+        solution_seed = seed * 100000 + i
+        solution = generate_random_solution(instance, seed=solution_seed)
         solution = enforce_hard_constraints(solution, instance)
         population.append(solution)
 
@@ -245,12 +246,20 @@ def run_genetic_algorithm(
     mutation_rate=0.10,
     elite_size=5,
     tournament_size=3,
+    stagnation_k=20,
     seed=0,
+    verbose= True,
 ):
     start_time = time.perf_counter()
     random.seed(seed)
 
-    population = generate_initial_population(instance, population_size)
+    population = generate_initial_population(
+        instance,
+        population_size,
+        seed=seed
+    )
+
+    random.seed(seed)
     population = sorted(
         population,
         key=lambda solution: fitness(solution, instance)
@@ -260,6 +269,8 @@ def run_genetic_algorithm(
 
     best_solution = deepcopy(initial_best_solution)
     best_metrics = initial_best_metrics
+    generations_without_improvement = 0
+    actual_generation = 0
     
     for generation in range(1, generations + 1):
         population = sorted(
@@ -269,7 +280,20 @@ def run_genetic_algorithm(
 
         current_best = population[0]
         current_metrics = evaluate_solution(current_best, instance)
+        if current_metrics["total_penalty"] < best_metrics["total_penalty"]:
+            best_solution = deepcopy(current_best)
+            best_metrics = current_metrics
+            generations_without_improvement = 0  # reset
+        else:
+            generations_without_improvement += 1  # increment
 
+        # Stagnation check
+        if generations_without_improvement >= stagnation_k:
+            if verbose:
+                print(f"[EARLY STOP] Stagnation at generation {generation}")
+            break
+
+        actual_generations = generation
         if (
             best_metrics is None
             or current_metrics["total_penalty"] < best_metrics["total_penalty"]
@@ -341,7 +365,7 @@ def run_genetic_algorithm(
     print(f"Initial setup time: {initial_best_metrics['setup_total_min']:.2f} min")
     print(f"Final setup time: {best_metrics['setup_total_min']:.2f} min")
 
-    return best_solution, best_metrics
+    return best_solution, best_metrics,actual_generations
 
 
 
