@@ -29,6 +29,7 @@ MUTATION_RATE = 0.10
 ELITE_SIZE = 5
 TOURNAMENT_SIZE = 3
 RANDOM_SEED = 42
+LUNCH_BREAK_MIN = 30
 
 
 def format_date(value):
@@ -99,11 +100,16 @@ def apply_dashboard_overrides(
         end_min = minutes_from_time(end_times_by_day[day])
 
         if n_shifts == 2:
-            gross_capacity = 16 * 60
+            gross_capacity = 17 * 60
         else:
             gross_capacity = max(0, end_min - start_min)
 
-        available_capacity = max(0, gross_capacity - cleaning_time * n_shifts)
+        available_capacity = max(
+            0,
+            gross_capacity
+            - LUNCH_BREAK_MIN * n_shifts
+            - cleaning_time * n_shifts
+        )
 
         daily_shift_start_min[day] = start_min
         daily_shift_end_min[day] = start_min + gross_capacity
@@ -1074,7 +1080,7 @@ with st.expander("Operadores e horários por dia", expanded=True):
         with day_col5:
             end_times_by_day[day_index] = st.time_input(
                 "Fim",
-                value=time(16, 0),
+                value=time(16, 30),
                 key=f"end_time_day_{day_index}",
             )
 
