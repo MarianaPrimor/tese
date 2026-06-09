@@ -1,4 +1,5 @@
 import os
+from datetime import date, time, timedelta
 
 import altair as alt
 import pandas as pd
@@ -8,7 +9,9 @@ from generate_instance import load_real_instance
 from geneticalgorithm import run_genetic_algorithm
 from evaluator import (
     create_refs_by_id,
+    get_available_line_time_for_day,
     get_production_time,
+    get_standard_operators_for_day,
     get_setup,
     TIME_BUCKET_MIN,
 )
@@ -43,6 +46,9 @@ def format_time_from_minutes(value):
         return ""
 
     value = int(round(value))
+    if value == 24 * 60:
+        return "24:00"
+
     day_offset = value // (24 * 60)
     value = value % (24 * 60)
     hours = value // 60
@@ -52,6 +58,78 @@ def format_time_from_minutes(value):
         return f"+{day_offset}d {hours:02d}:{minutes:02d}"
 
     return f"{hours:02d}:{minutes:02d}"
+
+
+def minutes_from_time(value):
+    return value.hour * 60 + value.minute
+
+
+def build_working_days_from_dashboard(start_date, end_date, non_working_days):
+    working_days = []
+    current = start_date
+    non_working_days = set(non_working_days or [])
+
+    while current <= end_date:
+        if current.weekday() < 5 and current not in non_working_days:
+            working_days.append(current)
+
+        current += timedelta(days=1)
+
+    return working_days
+
+
+def apply_dashboard_overrides(
+    instance,
+    working_days,
+    operators_by_day,
+    start_times_by_day,
+    end_times_by_day,
+    shifts_by_day,
+):
+    daily_capacity_min = {}
+    daily_shift_start_min = {}
+    daily_shift_end_min = {}
+    daily_shifts = {}
+
+    cleaning_time = instance.get("end_of_day_cleaning_time_min", 0)
+
+    for day in range(1, len(working_days) + 1):
+        n_shifts = shifts_by_day.get(day, 1)
+        start_min = minutes_from_time(start_times_by_day[day])
+        end_min = minutes_from_time(end_times_by_day[day])
+
+        if n_shifts == 2:
+            gross_capacity = 16 * 60
+        else:
+            gross_capacity = max(0, end_min - start_min)
+
+        available_capacity = max(0, gross_capacity - cleaning_time * n_shifts)
+
+        daily_shift_start_min[day] = start_min
+        daily_shift_end_min[day] = start_min + gross_capacity
+        daily_capacity_min[day] = available_capacity
+        daily_shifts[day] = n_shifts
+
+    monday_days = [
+        index + 1
+        for index, working_day in enumerate(working_days)
+        if working_day.weekday() == 0
+    ]
+
+    instance["working_days"] = working_days
+    instance["n_days"] = len(working_days)
+    instance["days"] = [f"day_{i + 1}" for i in range(len(working_days))]
+    instance["monday_days"] = monday_days
+    instance["standard_operators_by_day"] = operators_by_day
+    instance["daily_shift_start_min"] = daily_shift_start_min
+    instance["daily_shift_end_min"] = daily_shift_end_min
+    instance["daily_capacity_min"] = daily_capacity_min
+    instance["daily_shifts"] = daily_shifts
+
+    if daily_capacity_min:
+        instance["available_line_time_min"] = min(daily_capacity_min.values())
+
+    return instance
 
 
 def get_production_date(instance, day):
@@ -190,7 +268,7 @@ def build_capacity_df(instance, best_metrics):
         production_time = best_metrics["production_time_by_day_line"].get((day, line), 0)
         setup_time = best_metrics["setup_time_by_day_line"].get((day, line), 0)
         occupied_time = production_time + setup_time
-        available_time = instance["available_line_time_min"]
+        available_time = get_available_line_time_for_day(instance, day)
         excess = best_metrics["capacity_excess_by_day_line"].get((day, line), 0)
         utilization = occupied_time / available_time * 100 if available_time else 0
 
@@ -198,6 +276,7 @@ def build_capacity_df(instance, best_metrics):
             "Production date": get_production_date(instance, day),
             "Day": day,
             "Line": line,
+            "Shifts": instance.get("daily_shifts", {}).get(day, 1),
             "Production time (min)": round(production_time, 1),
             "Setup time (min)": round(setup_time, 1),
             "Occupied time (min)": round(occupied_time, 1),
@@ -217,6 +296,7 @@ def build_compact_schedule_df(instance, plan_df, best_metrics):
         row = {
             "Production date": get_production_date(instance, day),
             "Day": day,
+            "Shifts": instance.get("daily_shifts", {}).get(day, 1),
         }
 
         max_utilization = 0
@@ -231,7 +311,7 @@ def build_compact_schedule_df(instance, plan_df, best_metrics):
             production_time = best_metrics["production_time_by_day_line"].get((day, line), 0)
             setup_time = best_metrics["setup_time_by_day_line"].get((day, line), 0)
             excess = best_metrics["capacity_excess_by_day_line"].get((day, line), 0)
-            available = instance["available_line_time_min"]
+            available = get_available_line_time_for_day(instance, day)
             utilization = (production_time + setup_time) / available * 100 if available else 0
 
             row[f"{line} sequence"] = refs
@@ -298,12 +378,24 @@ def build_product_matrix_df(instance, plan_df):
 
 def build_time_slot_activity_df(instance, best_metrics):
     operations = best_metrics.get("time_operations", [])
-    standard_operators = best_metrics.get("standard_operators", instance.get("standard_operators", 0))
     rows = []
-    start_bucket = (8 * 60) // TIME_BUCKET_MIN
-    end_bucket = (24 * 60) // TIME_BUCKET_MIN
 
     for day in range(1, instance["n_days"] + 1):
+        standard_operators = get_standard_operators_for_day(instance, day)
+        start_min = instance.get("daily_shift_start_min", {}).get(day, 8 * 60)
+        end_min = instance.get("daily_shift_end_min", {}).get(day, 24 * 60)
+        latest_operation_end = max(
+            (
+                op["end"]
+                for op in operations
+                if op["day"] == day
+            ),
+            default=end_min,
+        )
+        end_min = max(end_min, latest_operation_end)
+        start_bucket = start_min // TIME_BUCKET_MIN
+        end_bucket = (end_min + TIME_BUCKET_MIN - 1) // TIME_BUCKET_MIN
+
         for bucket in range(start_bucket, end_bucket):
             start = bucket * TIME_BUCKET_MIN
             end = start + TIME_BUCKET_MIN
@@ -447,7 +539,7 @@ def render_interactive_table(df, key, height=420):
 
 
 st.set_page_config(
-    page_title="Planeamento de Produção - Doceleia",
+    page_title="Planeamento de Produção - Empresa X",
     layout="wide",
 )
 
@@ -548,11 +640,178 @@ st.markdown(
     }
     .stTextInput input,
     .stNumberInput input,
-    textarea,
-    input {
+    textarea {
         background-color: #ffffff !important;
         color: #172033 !important;
         border: 1px solid #b8c7d9 !important;
+    }
+    [data-baseweb="select"],
+    [data-baseweb="select"] > div,
+    [data-baseweb="popover"],
+    [data-baseweb="popover"] > div,
+    [data-baseweb="popover"] div,
+    [data-baseweb="popover"] [role="listbox"],
+    [data-baseweb="popover"] [role="option"],
+    [data-baseweb="menu"],
+    [data-baseweb="menu"] ul,
+    [data-baseweb="menu"] li,
+    [data-testid="stDateInput"] input,
+    [data-testid="stTimeInput"] input {
+        background-color: #ffffff !important;
+        color: #172033 !important;
+        border-color: #b8c7d9 !important;
+    }
+    [data-testid="stSelectbox"] [data-baseweb="select"],
+    [data-testid="stSelectbox"] [data-baseweb="select"] > div {
+        background-color: #ffffff !important;
+        color: #172033 !important;
+        border-color: #b8c7d9 !important;
+    }
+    [data-testid="stMultiSelect"] [data-baseweb="select"],
+    [data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+        background-color: #ffffff !important;
+        color: #172033 !important;
+        border-color: #b8c7d9 !important;
+    }
+    [data-baseweb="select"] *,
+    [data-baseweb="popover"] *,
+    [data-baseweb="menu"] *,
+    [data-testid="stDateInput"] *,
+    [data-testid="stTimeInput"] *,
+    [data-testid="stMultiSelect"] *,
+    [data-testid="stSelectbox"] *,
+    [data-testid="stExpander"] *,
+    [data-testid="stSlider"] * {
+        color: #172033 !important;
+    }
+    [data-baseweb="calendar"],
+    [data-baseweb="calendar"] *,
+    [data-baseweb="datepicker"],
+    [data-baseweb="datepicker"] *,
+    [data-baseweb="calendar"] + div,
+    [data-baseweb="calendar"] + div *,
+    [data-baseweb="calendar"] footer,
+    [data-baseweb="calendar"] footer *,
+    [role="dialog"],
+    [role="dialog"] * {
+        background-color: #ffffff !important;
+        color: #172033 !important;
+        border-color: #b8c7d9 !important;
+    }
+    [data-baseweb="calendar"] input,
+    [data-baseweb="datepicker"] input {
+        background-color: #ffffff !important;
+        color: #172033 !important;
+        border: 1px solid #b8c7d9 !important;
+    }
+    [data-baseweb="calendar"] table,
+    [data-baseweb="calendar"] tbody,
+    [data-baseweb="calendar"] tr,
+    [data-baseweb="calendar"] td,
+    [data-baseweb="calendar"] button,
+    [data-baseweb="calendar"] [role="grid"],
+    [data-baseweb="calendar"] [role="row"],
+    [data-baseweb="calendar"] [role="gridcell"],
+    [data-baseweb="calendar"] [aria-disabled="true"],
+    [data-baseweb="calendar"] button:disabled,
+    [data-baseweb="calendar"] [disabled] {
+        background: #ffffff !important;
+        background-color: #ffffff !important;
+        color: #172033 !important;
+    }
+    [data-baseweb="calendar"] [aria-disabled="true"] *,
+    [data-baseweb="calendar"] button:disabled *,
+    [data-baseweb="calendar"] [disabled] * {
+        background: #ffffff !important;
+        background-color: #ffffff !important;
+        color: #ffffff !important;
+    }
+    [data-baseweb="calendar"] div:empty,
+    [data-baseweb="calendar"] span:empty,
+    [data-baseweb="datepicker"] div:empty,
+    [data-baseweb="datepicker"] span:empty,
+    div[data-baseweb="popover"] div:empty,
+    div[data-baseweb="popover"] span:empty {
+        background: #ffffff !important;
+        background-color: #ffffff !important;
+        border-color: #ffffff !important;
+        box-shadow: none !important;
+        outline: none !important;
+    }
+    [data-baseweb="calendar"] *::before,
+    [data-baseweb="calendar"] *::after,
+    [data-baseweb="datepicker"] *::before,
+    [data-baseweb="datepicker"] *::after {
+        background: transparent !important;
+        background-color: transparent !important;
+        box-shadow: none !important;
+    }
+    [aria-selected="true"],
+    [data-baseweb="calendar"] button[aria-selected="true"] {
+        background-color: #153e7e !important;
+        color: #ffffff !important;
+    }
+    [data-baseweb="calendar"] button:hover,
+    [data-baseweb="menu"] li:hover,
+    [data-baseweb="popover"] [role="option"]:hover {
+        background-color: #eef3f8 !important;
+        color: #153e7e !important;
+    }
+    div[data-baseweb="popover"],
+    div[data-baseweb="popover"] > div,
+    div[data-baseweb="popover"] ul,
+    div[data-baseweb="popover"] li,
+    div[data-baseweb="popover"] [role="listbox"],
+    div[data-baseweb="popover"] [role="listbox"] > div,
+    div[data-baseweb="popover"] [role="option"],
+    div[data-baseweb="popover"] [data-baseweb="menu"],
+    div[data-baseweb="popover"] [data-baseweb="menu"] ul,
+    div[data-baseweb="popover"] [data-baseweb="menu"] li {
+        background: #ffffff !important;
+        background-color: #ffffff !important;
+        color: #172033 !important;
+        border-color: #b8c7d9 !important;
+    }
+    div[data-baseweb="popover"] [role="listbox"] *,
+    div[data-baseweb="popover"] [role="option"] *,
+    div[data-baseweb="popover"] [data-baseweb="menu"] * {
+        color: #172033 !important;
+    }
+    div[data-baseweb="popover"] [role="option"]:hover,
+    div[data-baseweb="popover"] [data-baseweb="menu"] li:hover {
+        background: #eef3f8 !important;
+        background-color: #eef3f8 !important;
+        color: #153e7e !important;
+    }
+    div[data-baseweb="popover"] [aria-selected="true"],
+    div[data-baseweb="popover"] [aria-selected="true"] * {
+        background: #153e7e !important;
+        background-color: #153e7e !important;
+        color: #ffffff !important;
+    }
+    [data-baseweb="tag"] {
+        background-color: #eef3f8 !important;
+        color: #153e7e !important;
+        border: 1px solid #b8c7d9 !important;
+    }
+    [data-testid="stExpander"] {
+        background-color: #ffffff !important;
+        border: 1px solid #cfd9e6 !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stExpander"] details,
+    [data-testid="stExpander"] summary {
+        background-color: #ffffff !important;
+    }
+    [data-testid="stSlider"] [role="slider"] {
+        background-color: #153e7e !important;
+        border-color: #153e7e !important;
+    }
+    [data-testid="stSlider"] div[data-baseweb="slider"] {
+        background: transparent !important;
+    }
+    [data-testid="stSlider"] div[data-baseweb="slider"] [aria-hidden="true"] {
+        background-color: #d7e1ef !important;
     }
     .stAlert,
     [data-testid="stAlert"] {
@@ -707,17 +966,155 @@ with input_col2:
         type=["xlsx"],
     )
 
+excel_source = uploaded_excel if uploaded_excel is not None else excel_path
+
+try:
+    base_instance = load_real_instance(excel_source)
+except Exception as exc:
+    st.error(f"Não foi possível carregar o ficheiro de inputs: {exc}")
+    st.stop()
+
+default_working_days = base_instance.get("working_days", [])
+
+if default_working_days:
+    default_start_date = default_working_days[0]
+    default_end_date = default_working_days[-1]
+else:
+    default_start_date = date.today()
+    default_end_date = date.today()
+
+st.subheader("Parâmetros operacionais do plano")
+
+horizon_col1, horizon_col2 = st.columns(2)
+
+with horizon_col1:
+    planning_start_date = st.date_input(
+        "Início do horizonte de planeamento",
+        value=default_start_date,
+    )
+
+with horizon_col2:
+    planning_end_date = st.date_input(
+        "Fim do horizonte de planeamento",
+        value=default_end_date,
+    )
+
+if planning_end_date < planning_start_date:
+    st.error("A data final não pode ser anterior à data inicial.")
+    st.stop()
+
+all_calendar_days = []
+current_day = planning_start_date
+
+while current_day <= planning_end_date:
+    all_calendar_days.append(current_day)
+    current_day += timedelta(days=1)
+
+non_working_days = st.multiselect(
+    "Dias de limpeza / feriados",
+    options=all_calendar_days,
+    format_func=format_date,
+    default=[],
+    placeholder="Selecionar dias",
+)
+
+working_days = build_working_days_from_dashboard(
+    planning_start_date,
+    planning_end_date,
+    non_working_days,
+)
+
+if not working_days:
+    st.error("O horizonte selecionado não tem dias úteis para planear.")
+    st.stop()
+
+default_operators = int(base_instance.get("standard_operators", 0) or 0)
+operators_by_day = {}
+start_times_by_day = {}
+end_times_by_day = {}
+shifts_by_day = {}
+
+with st.expander("Operadores e horários por dia", expanded=True):
+    st.caption(
+        "Os valores abaixo usam os defaults como ponto de partida, "
+        "mas podem ser ajustados para cada dia do plano."
+    )
+
+    for day_index, working_day in enumerate(working_days, start=1):
+        day_col1, day_col2, day_col3, day_col4, day_col5 = st.columns([1.4, 1, 1, 1, 1])
+
+        with day_col1:
+            st.markdown(f"**{day_index} - {format_date(working_day)}**")
+
+        with day_col2:
+            operators_by_day[day_index] = st.slider(
+                "Operadores",
+                min_value=0,
+                max_value=max(40, default_operators + 20),
+                value=default_operators,
+                step=1,
+                key=f"operators_day_{day_index}",
+            )
+
+        with day_col3:
+            shifts_by_day[day_index] = st.selectbox(
+                "Turnos",
+                options=[1, 2],
+                index=0,
+                key=f"shifts_day_{day_index}",
+            )
+
+        with day_col4:
+            start_times_by_day[day_index] = st.time_input(
+                "Início",
+                value=time(8, 0),
+                key=f"start_time_day_{day_index}",
+            )
+
+        with day_col5:
+            end_times_by_day[day_index] = st.time_input(
+                "Fim",
+                value=time(16, 0),
+                key=f"end_time_day_{day_index}",
+            )
+
+instance = apply_dashboard_overrides(
+    base_instance,
+    working_days,
+    operators_by_day,
+    start_times_by_day,
+    end_times_by_day,
+    shifts_by_day,
+)
+
+scenario_rows = []
+
+for day_index, working_day in enumerate(working_days, start=1):
+    scenario_rows.append({
+        "Dia": day_index,
+        "Data": format_date(working_day),
+        "Operadores disponíveis": operators_by_day[day_index],
+        "Turnos": shifts_by_day[day_index],
+        "Início": start_times_by_day[day_index].strftime("%H:%M"),
+        "Fim": end_times_by_day[day_index].strftime("%H:%M"),
+        "Capacidade disponível (min)": instance["daily_capacity_min"][day_index],
+    })
+
+st.subheader("Resumo dos parâmetros do cenário")
+st.dataframe(
+    pd.DataFrame(scenario_rows),
+    width="stretch",
+    hide_index=True,
+)
+
 run_button = st.button("Gerar plano de produção", width="content")
 
 if not run_button:
     st.info("Pressione o botão para gerar o plano de produção.")
     st.stop()
 
-excel_source = uploaded_excel if uploaded_excel is not None else excel_path
-
 try:
     with st.spinner("A carregar dados e a correr o algoritmo genético..."):
-        instance = load_real_instance(excel_source)
         planning_month = get_planning_month(instance)
         best_solution, best_metrics, actual_generations = run_genetic_algorithm(
             instance,
@@ -762,6 +1159,7 @@ sequencing_df = compact_df.rename(columns={
     "L2 excess": "Excesso L2",
     "Status": "Estado",
 })
+sequencing_df = sequencing_df.rename(columns={"Shifts": "Turnos"})
 sequencing_df["Estado"] = sequencing_df["Estado"].replace({
     "Overloaded": "Sobrecarga",
     "Near limit": "Perto do limite",
@@ -867,6 +1265,7 @@ else:
         "Production date": "Data de produção",
         "Day": "Dia",
         "Line": "Linha",
+        "Shifts": "Turnos",
         "Production time (min)": "Tempo de produção (min)",
         "Setup time (min)": "Tempo de setup (min)",
         "Occupied time (min)": "Tempo ocupado (min)",

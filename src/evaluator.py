@@ -178,6 +178,34 @@ def calculate_standard_operators(instance):
     return standard_operators
 
 
+def get_standard_operators_for_day(instance, day):
+    operators_by_day = instance.get("standard_operators_by_day", {})
+
+    if day in operators_by_day:
+        return operators_by_day[day]
+
+    return calculate_standard_operators(instance)
+
+
+def get_available_line_time_for_day(instance, day):
+    capacity_by_day = instance.get("daily_capacity_min", {})
+
+    if day in capacity_by_day:
+        return capacity_by_day[day]
+
+    return instance["available_line_time_min"]
+
+
+def get_shift_start_for_day(instance, day):
+    start_by_day = instance.get("daily_shift_start_min", {})
+    return start_by_day.get(day, SHIFT_START_MIN)
+
+
+def get_shift_end_for_day(instance, day):
+    end_by_day = instance.get("daily_shift_end_min", {})
+    return end_by_day.get(day)
+
+
 # ============================================================
 # PRODUCTION TIME
 # ============================================================
@@ -316,7 +344,7 @@ def simulate_time_schedule(solution, instance):
         if line not in instance["final_lines"]:
             continue
 
-        current_time = SHIFT_START_MIN
+        current_time = get_shift_start_for_day(instance, day)
         previous_family = None
         previous_prod_ops = 0
 
@@ -391,7 +419,7 @@ def simulate_time_schedule(solution, instance):
     return operations
 
 
-def calculate_operator_usage_by_time(operations, standard_operators):
+def calculate_operator_usage_by_time(operations, instance):
     usage = {}
 
     for op in operations:
@@ -405,10 +433,12 @@ def calculate_operator_usage_by_time(operations, standard_operators):
             key = (op["day"], bucket)
             usage[key] = usage.get(key, 0) + op["operators"]
 
-    excess = {
-        key: max(0, value - standard_operators)
-        for key, value in usage.items()
-    }
+    excess = {}
+
+    for key, value in usage.items():
+        day, _ = key
+        available_operators = get_standard_operators_for_day(instance, day)
+        excess[key] = max(0, value - available_operators)
 
     return usage, excess
 
@@ -554,7 +584,9 @@ def evaluate_solution(solution, instance):
             + setup_time_by_day_line.get(key, 0)
         )
 
-        excess = max(0, total_time - instance["available_line_time_min"])
+        day, _ = key
+        available_line_time = get_available_line_time_for_day(instance, day)
+        excess = max(0, total_time - available_line_time)
         capacity_excess_by_day_line[key] = excess
 
         if excess > 0:
@@ -570,7 +602,8 @@ def evaluate_solution(solution, instance):
 
         operators_required_by_day[day] = required_ops
 
-        excess = max(0, required_ops - standard_operators)
+        available_operators = get_standard_operators_for_day(instance, day)
+        excess = max(0, required_ops - available_operators)
         operator_excess_by_day[day] = excess
 
         if excess > 0:
@@ -584,7 +617,7 @@ def evaluate_solution(solution, instance):
     operators_required_by_time, operator_excess_by_time = (
         calculate_operator_usage_by_time(
             time_operations,
-            standard_operators
+            instance
         )
     )
 
@@ -633,6 +666,10 @@ def evaluate_solution(solution, instance):
         "operators_required_by_day": operators_required_by_day,
         "operator_excess_by_day": operator_excess_by_day,
         "standard_operators": standard_operators,
+        "standard_operators_by_day": instance.get("standard_operators_by_day", {}),
+        "daily_capacity_min": instance.get("daily_capacity_min", {}),
+        "daily_shift_start_min": instance.get("daily_shift_start_min", {}),
+        "daily_shift_end_min": instance.get("daily_shift_end_min", {}),
         "time_operations": time_operations,
         "operators_required_by_time": operators_required_by_time,
         "operator_excess_by_time": operator_excess_by_time,
@@ -709,7 +746,7 @@ def print_metrics(metrics):
         print(
             f"  Day {day}: "
             f"{value} required / "
-            f"{metrics['standard_operators']} standard / "
+            f"{metrics.get('standard_operators_by_day', {}).get(day, metrics['standard_operators'])} standard / "
             f"{excess} excess"
         )
 
@@ -832,7 +869,7 @@ def print_validation_report(solution, instance, title="VALIDATION REPORT"):
         setup_time = metrics["setup_time_by_day_line"].get(key, 0)
         total_time = production_time + setup_time
         excess = metrics["capacity_excess_by_day_line"].get(key, 0)
-        available = instance["available_line_time_min"]
+        available = get_available_line_time_for_day(instance, day)
         status = "OK" if excess == 0 else "PENALIZED"
 
         print(
@@ -852,7 +889,7 @@ def print_validation_report(solution, instance, title="VALIDATION REPORT"):
 
         print(
             f"  Day {day} {_format_minutes(start)}-{_format_minutes(end)}: "
-            f"{required} required / {metrics['standard_operators']} standard | "
+            f"{required} required / {get_standard_operators_for_day(instance, day)} standard | "
             f"excess {excess} -> {status}"
         )
 
