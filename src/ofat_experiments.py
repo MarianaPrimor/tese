@@ -7,7 +7,7 @@ from geneticalgorithm import run_genetic_algorithm
 
 
 # Fixed configuration
-INSTANCE_PATH = "../Inputs_Doceleia.xlsx"
+INSTANCE_PATH = "../Inputs_EmpresaX.xlsx"
 N_RUNS = 5
 SEEDS = [0, 7, 13, 42, 99]
 MAX_GENERATIONS = 200

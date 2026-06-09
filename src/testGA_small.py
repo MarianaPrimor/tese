@@ -2,7 +2,7 @@ from generate_instance import load_real_instance
 from geneticalgorithm import run_genetic_algorithm
 from evaluator import print_solution, print_metrics
 
-instance = load_real_instance("../Inputs_Doceleia_small.xlsx")
+instance = load_real_instance("../Inputs_EmpresaX_small.xlsx")
 
 solution, metrics = run_genetic_algorithm(
     instance,

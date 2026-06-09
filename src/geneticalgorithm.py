@@ -374,7 +374,7 @@ def run_genetic_algorithm(
 # ============================================================
 
 if __name__ == "__main__":
-    instance = load_real_instance("../Inputs_Doceleia.xlsx")
+    instance = load_real_instance("../Inputs_EmpresaX.xlsx")
 
     best_solution, best_metrics = run_genetic_algorithm(
         instance,

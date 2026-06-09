@@ -647,7 +647,7 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
     }
 
 if __name__ == "__main__":
-    instance = load_real_instance("../Inputs_Doceleia_small.xlsx")
+    instance = load_real_instance("../Inputs_EmpresaX_small.xlsx")
 
     solution, metrics, info = solve_with_gurobi(
         instance,

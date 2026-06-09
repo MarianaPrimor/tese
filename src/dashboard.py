@@ -22,6 +22,8 @@ OVERLOAD_BG = "#f8d7da"
 OVERLOAD_TEXT = "#7f1d1d"
 NEUTRAL_BG = "#ffffff"
 NEAR_LIMIT_BG = "#fff3cd"
+OK_BG = "#d1e7dd"
+OK_TEXT = "#0f5132"
 
 POPULATION_SIZE = 100
 GENERATIONS = 100
@@ -399,8 +401,8 @@ def build_time_slot_activity_df(instance, best_metrics):
             default=end_min,
         )
         end_min = max(end_min, latest_operation_end)
-        start_bucket = start_min // TIME_BUCKET_MIN
-        end_bucket = (end_min + TIME_BUCKET_MIN - 1) // TIME_BUCKET_MIN
+        start_bucket = int(start_min // TIME_BUCKET_MIN)
+        end_bucket = int((end_min + TIME_BUCKET_MIN - 1) // TIME_BUCKET_MIN)
 
         for bucket in range(start_bucket, end_bucket):
             start = bucket * TIME_BUCKET_MIN
@@ -485,6 +487,9 @@ def highlight_status(row):
     if status in ["Near limit", "Perto do limite"]:
         return [f"background-color: {NEAR_LIMIT_BG}; color: #7a5a00"] * len(row)
 
+    if status == "OK":
+        return [f"background-color: {OK_BG}; color: {OK_TEXT}"] * len(row)
+
     return [f"background-color: {NEUTRAL_BG}; color: #172033"] * len(row)
 
 
@@ -525,8 +530,13 @@ def light_table_style(df):
 
 
 def render_interactive_table(df, key, height=420):
+    display_data = df
+
+    if "Estado" in df.columns or "Status" in df.columns:
+        display_data = df.style.apply(highlight_status, axis=1)
+
     st.dataframe(
-        df,
+        display_data,
         width="stretch",
         hide_index=True,
         height=height,
@@ -550,7 +560,7 @@ st.set_page_config(
 )
 
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-default_excel_path = os.path.join(project_root, "Inputs_Doceleia.xlsx")
+default_excel_path = os.path.join(project_root, "Inputs_EmpresaX.xlsx")
 
 st.markdown(
     """

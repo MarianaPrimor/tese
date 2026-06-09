@@ -933,7 +933,7 @@ def print_validation_report(solution, instance, title="VALIDATION REPORT"):
 if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
     instance_path = os.path.abspath(
-        os.path.join(script_dir, "..", "Inputs_Doceleia.xlsx")
+        os.path.join(script_dir, "..", "Inputs_EmpresaX.xlsx")
     )
 
     instance = load_real_instance(instance_path)
