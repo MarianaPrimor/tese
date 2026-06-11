@@ -144,10 +144,7 @@ def mutate(
     solution,
     instance,
     mutation_rate=0.10,
-    assignment_mutation_rate=0.05,
-    postponement_mutation_rate=0.30,
 ):
-    refs_by_id = create_refs_by_id(instance)
     mutated_solution = deepcopy(solution)
 
     # Swap mutation: exchanges the position of two orders
@@ -165,32 +162,6 @@ def mutate(
 
         gene = mutated_solution.pop(i)
         mutated_solution.insert(j, gene)
-
-    # Assignment mutation: changes day/line/postponement while keeping feasibility
-    for gene in mutated_solution:
-        if random.random() < assignment_mutation_rate:
-            ref_id = str(gene["ref_id"]).strip()
-
-            if ref_id not in refs_by_id:
-                gene["line"] = None
-                gene["day"] = None
-                gene["postponed"] = True
-                continue
-
-            ref = refs_by_id[ref_id]
-            valid_lines = valid_lines_for_ref(ref)
-            valid_days = get_valid_days_for_ref(instance, ref)
-
-            if random.random() < postponement_mutation_rate:
-                gene["postponed"] = not gene.get("postponed", False)
-
-            if gene.get("postponed") or not valid_lines or not valid_days:
-                gene["line"] = None
-                gene["day"] = None
-                gene["postponed"] = True
-            else:
-                gene["line"] = valid_lines[0]
-                gene["day"] = random.choice(valid_days)
 
     return mutated_solution
 
@@ -331,7 +302,6 @@ def run_genetic_algorithm(
                 child,
                 instance,
                 mutation_rate=mutation_rate,
-                assignment_mutation_rate=0.05
             )
 
             child = enforce_hard_constraints(child, instance)

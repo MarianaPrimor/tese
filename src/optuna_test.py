@@ -59,7 +59,20 @@ study = optuna.create_study(
     sampler=optuna.samplers.TPESampler(seed=42),
 )
 
-study.optimize(objective, n_trials=N_TRIALS)
+completed_trials = [
+    trial
+    for trial in study.trials
+    if trial.state == optuna.trial.TrialState.COMPLETE
+]
+remaining_trials = max(0, N_TRIALS - len(completed_trials))
+
+print(f"Completed trials already stored: {len(completed_trials)}")
+print(f"Remaining trials to run: {remaining_trials}")
+
+if remaining_trials > 0:
+    study.optimize(objective, n_trials=remaining_trials)
+else:
+    print("Target number of completed trials already reached.")
 
 
 # Results
