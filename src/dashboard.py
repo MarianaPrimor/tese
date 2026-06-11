@@ -1,4 +1,5 @@
 import os
+from copy import deepcopy
 from datetime import date, time, timedelta
 
 import altair as alt
@@ -9,11 +10,14 @@ from generate_instance import load_real_instance
 from geneticalgorithm import run_genetic_algorithm
 from evaluator import (
     create_refs_by_id,
+    evaluate_solution,
     get_available_line_time_for_day,
     get_production_time,
     get_standard_operators_for_day,
     get_setup,
+    get_valid_days_for_ref,
     TIME_BUCKET_MIN,
+    valid_lines_for_ref,
 )
 
 
@@ -32,6 +36,7 @@ ELITE_SIZE = 5
 TOURNAMENT_SIZE = 3
 RANDOM_SEED = 42
 LUNCH_BREAK_MIN = 30
+OVERLOAD_TOLERANCE_MIN = 30
 
 
 def format_date(value):
@@ -267,6 +272,193 @@ def build_plan_df(instance, best_solution):
     return pd.DataFrame(plan_rows)
 
 
+def build_scenario_editor_df(instance, solution):
+    refs_by_id = create_refs_by_id(instance)
+    rows = []
+    sequence_by_day_line = {}
+
+    for item in solution:
+        postponed = bool(item.get("postponed"))
+        day = item.get("day")
+        line = item.get("line")
+        ref_id = str(item.get("ref_id", "")).strip()
+        ref = refs_by_id.get(ref_id, {})
+        key = (day, line)
+
+        if postponed:
+            sequence = None
+        else:
+            sequence_by_day_line[key] = sequence_by_day_line.get(key, 0) + 1
+            sequence = sequence_by_day_line[key]
+
+        master_boxes = item.get("master_boxes", 0) or 0
+        economic_value = (
+            master_boxes
+            * (ref.get("economic_value_per_master_box") or 0)
+        )
+
+        rows.append({
+            "ID da ordem": item.get("order_id"),
+            "Referência": ref_id,
+            "Caixas master": master_boxes,
+            "Linha": line or "",
+            "Dia": day,
+            "Sequência": sequence,
+            "Adiado": postponed,
+            "Dia de entrega": item.get("delivery_date"),
+            "Valor económico": round(economic_value, 2),
+        })
+
+    return pd.DataFrame(rows)
+
+
+def build_solution_from_scenario(instance, base_solution, edited_df):
+    refs_by_id = create_refs_by_id(instance)
+    genes_by_order_id = {
+        item.get("order_id"): deepcopy(item)
+        for item in base_solution
+    }
+    ordered_genes = []
+    errors = []
+
+    for row_index, row in edited_df.iterrows():
+        order_id = row.get("ID da ordem")
+        gene = genes_by_order_id.get(order_id)
+
+        if gene is None:
+            errors.append(f"Linha {row_index + 1}: ordem {order_id} não encontrada.")
+            continue
+
+        ref_id = str(gene.get("ref_id", "")).strip()
+        ref = refs_by_id.get(ref_id)
+
+        if ref is None:
+            errors.append(
+                f"Ordem {order_id}: referência {ref_id} não encontrada."
+            )
+            continue
+
+        postponed = bool(row.get("Adiado"))
+        sequence_value = row.get("Sequência")
+        sequence = (
+            int(sequence_value)
+            if pd.notna(sequence_value)
+            else len(base_solution) + row_index
+        )
+
+        if postponed:
+            gene["day"] = None
+            gene["line"] = None
+            gene["postponed"] = True
+            sort_key = (
+                instance["n_days"] + 1,
+                "POSTPONED",
+                sequence,
+                order_id,
+            )
+        else:
+            day_value = row.get("Dia")
+
+            if pd.isna(day_value):
+                errors.append(f"Ordem {order_id}: escolha um dia de produção.")
+                continue
+
+            day = int(day_value)
+            valid_days = get_valid_days_for_ref(instance, ref)
+            valid_lines = valid_lines_for_ref(ref)
+
+            if day not in valid_days:
+                errors.append(
+                    f"Ordem {order_id} ({ref_id}): o dia {day} não é permitido."
+                )
+                continue
+
+            if not valid_lines:
+                errors.append(
+                    f"Ordem {order_id} ({ref_id}): não existe linha válida."
+                )
+                continue
+
+            gene["day"] = day
+            gene["line"] = valid_lines[0]
+            gene["postponed"] = False
+            sort_key = (day, gene["line"], sequence, order_id)
+
+        ordered_genes.append((sort_key, gene))
+
+    ordered_genes.sort(key=lambda item: item[0])
+    return [gene for _, gene in ordered_genes], errors
+
+
+def build_scenario_comparison_df(ga_metrics, manual_metrics):
+    comparison_rows = [
+        (
+            "Penalização total",
+            ga_metrics.get("total_penalty", 0),
+            manual_metrics.get("total_penalty", 0),
+            "min",
+        ),
+        (
+            "Excesso de capacidade (min)",
+            ga_metrics.get("total_capacity_excess", 0),
+            manual_metrics.get("total_capacity_excess", 0),
+            "min",
+        ),
+        (
+            "Tempo de setup (min)",
+            ga_metrics.get("setup_total_min", 0),
+            manual_metrics.get("setup_total_min", 0),
+            "min",
+        ),
+        (
+            "Dias de atraso",
+            ga_metrics.get("delay_days_total", 0),
+            manual_metrics.get("delay_days_total", 0),
+            "min",
+        ),
+        (
+            "Ordens adiadas",
+            ga_metrics.get("postponed_orders", 0),
+            manual_metrics.get("postponed_orders", 0),
+            "min",
+        ),
+        (
+            "Excesso horário de operadores",
+            ga_metrics.get("total_operator_excess_by_time", 0),
+            manual_metrics.get("total_operator_excess_by_time", 0),
+            "min",
+        ),
+        (
+            "Valor económico planeado",
+            ga_metrics.get("scheduled_economic_value", 0),
+            manual_metrics.get("scheduled_economic_value", 0),
+            "max",
+        ),
+    ]
+    rows = []
+
+    for indicator, ga_value, manual_value, direction in comparison_rows:
+        difference = manual_value - ga_value
+        improved = difference < 0 if direction == "min" else difference > 0
+
+        if abs(difference) < 1e-9:
+            result = "Sem alteração"
+        elif improved:
+            result = "Melhor"
+        else:
+            result = "Pior"
+
+        rows.append({
+            "Indicador": indicator,
+            "Solução GA": round(ga_value, 2),
+            "Cenário manual": round(manual_value, 2),
+            "Diferença": round(difference, 2),
+            "Resultado": result,
+        })
+
+    return pd.DataFrame(rows)
+
+
 def build_capacity_df(instance, best_metrics):
     rows = []
     keys = set(best_metrics["production_time_by_day_line"].keys())
@@ -277,7 +469,7 @@ def build_capacity_df(instance, best_metrics):
         setup_time = best_metrics["setup_time_by_day_line"].get((day, line), 0)
         occupied_time = production_time + setup_time
         available_time = get_available_line_time_for_day(instance, day)
-        excess = best_metrics["capacity_excess_by_day_line"].get((day, line), 0)
+        excess = max(0, occupied_time - available_time)
         utilization = occupied_time / available_time * 100 if available_time else 0
 
         rows.append({
@@ -308,7 +500,7 @@ def build_compact_schedule_df(instance, plan_df, best_metrics):
         }
 
         max_utilization = 0
-        total_excess = 0
+        max_excess = 0
 
         for line in instance["final_lines"]:
             line_df = day_df[day_df["Line"] == line].sort_values("Seq.")
@@ -318,9 +510,10 @@ def build_compact_schedule_df(instance, plan_df, best_metrics):
             )
             production_time = best_metrics["production_time_by_day_line"].get((day, line), 0)
             setup_time = best_metrics["setup_time_by_day_line"].get((day, line), 0)
-            excess = best_metrics["capacity_excess_by_day_line"].get((day, line), 0)
             available = get_available_line_time_for_day(instance, day)
-            utilization = (production_time + setup_time) / available * 100 if available else 0
+            occupied = production_time + setup_time
+            excess = max(0, occupied - available)
+            utilization = occupied / available * 100 if available else 0
 
             row[f"{line} sequence"] = refs
             row[f"{line} production"] = f"{production_time:.1f} min"
@@ -328,9 +521,9 @@ def build_compact_schedule_df(instance, plan_df, best_metrics):
             row[f"{line} excess"] = f"{excess:.1f} min"
 
             max_utilization = max(max_utilization, utilization)
-            total_excess += excess
+            max_excess = max(max_excess, excess)
 
-        if total_excess > 0:
+        if max_excess >= OVERLOAD_TOLERANCE_MIN:
             row["Status"] = "Overloaded"
         elif max_utilization >= 90:
             row["Status"] = "Near limit"
@@ -415,6 +608,7 @@ def build_time_slot_activity_df(instance, best_metrics):
             row = {
                 "Production date": get_production_date(instance, day),
                 "Day": day,
+                "Slot start (min)": start,
                 "Time slot": f"{format_time_from_minutes(start)}-{format_time_from_minutes(end)}",
                 "Standard operators": standard_operators,
             }
@@ -530,10 +724,10 @@ def light_table_style(df):
 
 
 def render_interactive_table(df, key, height=420):
-    display_data = df
+    display_data = light_table_style(df)
 
     if "Estado" in df.columns or "Status" in df.columns:
-        display_data = df.style.apply(highlight_status, axis=1)
+        display_data = display_data.apply(highlight_status, axis=1)
 
     st.dataframe(
         display_data,
@@ -851,6 +1045,32 @@ st.markdown(
     [data-testid="stFileUploader"] button * {
         color: #ffffff !important;
     }
+    [data-testid="stDataFrame"],
+    [data-testid="stDataFrame"] > div,
+    [data-testid="stDataEditor"],
+    [data-testid="stDataEditor"] > div,
+    [data-testid="stDataEditor"] div[role="grid"],
+    [data-testid="stDataEditor"] div[role="gridcell"],
+    [data-testid="stDataEditor"] div[role="columnheader"] {
+        background-color: #ffffff !important;
+        color: #172033 !important;
+        border-color: #cfd9e6 !important;
+    }
+    [data-testid="stDataFrame"] button,
+    [data-testid="stDataFrame"] button *,
+    [data-testid="stDataEditor"] button,
+    [data-testid="stDataEditor"] button * {
+        color: #153e7e !important;
+    }
+    [data-testid="stDataEditor"] input,
+    [data-testid="stDataEditor"] textarea {
+        background-color: #ffffff !important;
+        color: #172033 !important;
+        caret-color: #153e7e !important;
+    }
+    [data-testid="stDataEditor"] canvas {
+        background-color: #ffffff !important;
+    }
     .kaizen-table-wrap {
         width: 100%;
         overflow: auto;
@@ -1125,25 +1345,40 @@ st.dataframe(
 
 run_button = st.button("Gerar plano de produção", width="content")
 
-if not run_button:
+if run_button:
+    try:
+        with st.spinner("A carregar dados e a correr o algoritmo genético..."):
+            planning_month = get_planning_month(instance)
+            best_solution, best_metrics, actual_generations = run_genetic_algorithm(
+                instance,
+                population_size=POPULATION_SIZE,
+                generations=GENERATIONS,
+                mutation_rate=MUTATION_RATE,
+                elite_size=ELITE_SIZE,
+                tournament_size=TOURNAMENT_SIZE,
+                seed=RANDOM_SEED,
+            )
+
+        st.session_state["ga_solution"] = deepcopy(best_solution)
+        st.session_state["ga_metrics"] = deepcopy(best_metrics)
+        st.session_state["ga_planning_month"] = planning_month
+        st.session_state["scenario_version"] = (
+            st.session_state.get("scenario_version", 0) + 1
+        )
+    except Exception as exc:
+        st.error(f"Não foi possível gerar o plano: {exc}")
+        st.stop()
+
+if "ga_solution" not in st.session_state:
     st.info("Pressione o botão para gerar o plano de produção.")
     st.stop()
 
-try:
-    with st.spinner("A carregar dados e a correr o algoritmo genético..."):
-        planning_month = get_planning_month(instance)
-        best_solution, best_metrics, actual_generations = run_genetic_algorithm(
-            instance,
-            population_size=POPULATION_SIZE,
-            generations=GENERATIONS,
-            mutation_rate=MUTATION_RATE,
-            elite_size=ELITE_SIZE,
-            tournament_size=TOURNAMENT_SIZE,
-            seed=RANDOM_SEED,
-        )
-except Exception as exc:
-    st.error(f"Não foi possível gerar o plano: {exc}")
-    st.stop()
+best_solution = deepcopy(st.session_state["ga_solution"])
+best_metrics = evaluate_solution(best_solution, instance)
+planning_month = st.session_state.get(
+    "ga_planning_month",
+    get_planning_month(instance),
+)
 
 st.success(f"Plano gerado com sucesso para {planning_month}.")
 
@@ -1160,6 +1395,152 @@ col1.metric("Kg produzidos", f"{best_metrics.get('scheduled_kg', 0):,.1f}")
 col2.metric("Kg adiados", f"{best_metrics.get('postponed_kg', 0):,.1f}")
 col3.metric("Valor produzido", f"€{best_metrics.get('scheduled_economic_value', 0):,.0f}")
 col4.metric("Valor adiado", f"€{best_metrics.get('postponed_economic_value', 0):,.0f}")
+
+st.subheader("Teste interativo de cenários")
+st.caption(
+    "Altere o dia, a sequência ou o estado de adiamento de uma ordem. "
+    "A linha permanece bloqueada por ser uma restrição dura. "
+    "As métricas e a penalização são recalculadas automaticamente."
+)
+
+reset_scenario = st.button(
+    "Repor solução do GA",
+    width="content",
+)
+
+if reset_scenario:
+    st.session_state["scenario_version"] = (
+        st.session_state.get("scenario_version", 0) + 1
+    )
+    st.rerun()
+
+scenario_df = build_scenario_editor_df(instance, best_solution)
+scenario_version = st.session_state.get("scenario_version", 0)
+edited_scenario_df = st.data_editor(
+    scenario_df,
+    column_config={
+        "ID da ordem": st.column_config.NumberColumn(format="%d"),
+        "Caixas master": st.column_config.NumberColumn(format="%d"),
+        "Dia": st.column_config.NumberColumn(
+            min_value=1,
+            max_value=instance["n_days"],
+            step=1,
+            format="%d",
+        ),
+        "Sequência": st.column_config.NumberColumn(
+            min_value=1,
+            step=1,
+            format="%d",
+        ),
+        "Adiado": st.column_config.CheckboxColumn(),
+        "Valor económico": st.column_config.NumberColumn(
+            format="€ %.2f",
+        ),
+    },
+    disabled=[
+        "ID da ordem",
+        "Referência",
+        "Caixas master",
+        "Linha",
+        "Dia de entrega",
+        "Valor económico",
+    ],
+    hide_index=True,
+    width="stretch",
+    height=430,
+    key=f"scenario_editor_{scenario_version}",
+)
+
+manual_solution, scenario_errors = build_solution_from_scenario(
+    instance,
+    best_solution,
+    edited_scenario_df,
+)
+
+if scenario_errors:
+    st.error(
+        "O cenário manual tem alterações inválidas:\n\n- "
+        + "\n- ".join(scenario_errors)
+    )
+else:
+    manual_metrics = evaluate_solution(manual_solution, instance)
+    comparison_df = build_scenario_comparison_df(
+        best_metrics,
+        manual_metrics,
+    )
+
+    comparison_col1, comparison_col2 = st.columns(2)
+    comparison_col1.metric(
+        "Penalização do GA",
+        f"{best_metrics.get('total_penalty', 0):,.2f}",
+    )
+    comparison_col2.metric(
+        "Penalização do cenário manual",
+        f"{manual_metrics.get('total_penalty', 0):,.2f}",
+        delta=(
+            f"{manual_metrics.get('total_penalty', 0) - best_metrics.get('total_penalty', 0):,.2f}"
+        ),
+        delta_color="inverse",
+    )
+
+    render_interactive_table(
+        comparison_df,
+        key="comparacao_ga_cenario_manual",
+        height=330,
+    )
+
+    manual_plan_df = build_plan_df(instance, manual_solution)
+    manual_compact_df = build_compact_schedule_df(
+        instance,
+        manual_plan_df,
+        manual_metrics,
+    )
+    manual_capacity_df = build_capacity_df(instance, manual_metrics)
+
+    st.markdown("**Sequência resultante do cenário manual**")
+    manual_schedule_display = manual_compact_df.rename(columns={
+        "Production date": "Data de produção",
+        "Day": "Dia",
+        "Shifts": "Turnos",
+        "L1 sequence": "Sequência L1",
+        "L1 production": "Produção L1",
+        "L1 setup": "Setup L1",
+        "L1 excess": "Excesso L1",
+        "L2 sequence": "Sequência L2",
+        "L2 production": "Produção L2",
+        "L2 setup": "Setup L2",
+        "L2 excess": "Excesso L2",
+        "Status": "Estado",
+    })
+    manual_schedule_display["Estado"] = manual_schedule_display["Estado"].replace({
+        "Overloaded": "Sobrecarga",
+        "Near limit": "Perto do limite",
+        "OK": "OK",
+    })
+    render_interactive_table(
+        manual_schedule_display,
+        key="sequencia_cenario_manual",
+        height=360,
+    )
+
+    st.markdown("**Capacidade resultante do cenário manual**")
+    manual_capacity_display = manual_capacity_df.rename(columns={
+        "Production date": "Data de produção",
+        "Day": "Dia",
+        "Line": "Linha",
+        "Shifts": "Turnos",
+        "Production time (min)": "Tempo de produção (min)",
+        "Setup time (min)": "Tempo de setup (min)",
+        "Occupied time (min)": "Tempo ocupado (min)",
+        "Available time (min)": "Tempo disponível (min)",
+        "Capacity excess (min)": "Excesso de capacidade (min)",
+        "Utilization (%)": "Utilização (%)",
+    })
+    render_interactive_table(
+        manual_capacity_display,
+        key="capacidade_cenario_manual",
+        height=360,
+    )
 
 st.subheader("Sequência diária de produção")
 sequencing_df = compact_df.rename(columns={
@@ -1207,7 +1588,14 @@ else:
         alt.Chart(time_slot_df)
         .mark_rect()
         .encode(
-            x=alt.X("Time slot:N", title="Horário"),
+            x=alt.X(
+                "Time slot:N",
+                title="Horário",
+                sort=alt.SortField(
+                    field="Slot start (min)",
+                    order="ascending",
+                ),
+            ),
             y=alt.Y("Production date:N", title="Data de produção"),
             color=alt.Color(
                 "Total operators used:Q",
@@ -1238,6 +1626,10 @@ else:
         "Operator excess": "Excesso de operadores",
         "Status": "Estado",
     })
+    operators_df = operators_df.drop(
+        columns=["Slot start (min)"],
+        errors="ignore",
+    )
     for col in ["Atividade L1", "Atividade L2"]:
         if col in operators_df.columns:
             operators_df[col] = operators_df[col].replace({

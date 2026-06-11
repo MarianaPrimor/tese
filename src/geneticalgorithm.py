@@ -224,11 +224,20 @@ def run_genetic_algorithm(
     start_time = time.perf_counter()
     random.seed(seed)
 
+    if verbose:
+        print(
+            f"[GA] Generating initial population ({population_size} solutions)...",
+            flush=True,
+        )
+
     population = generate_initial_population(
         instance,
         population_size,
         seed=seed
     )
+
+    if verbose:
+        print("[GA] Evaluating initial population...", flush=True)
 
     random.seed(seed)
     population = sorted(
@@ -261,7 +270,10 @@ def run_genetic_algorithm(
         # Stagnation check
         if generations_without_improvement >= stagnation_k:
             if verbose:
-                print(f"[EARLY STOP] Stagnation at generation {generation}")
+                print(
+                    f"[EARLY STOP] Stagnation at generation {generation}",
+                    flush=True,
+                )
             break
 
         actual_generations = generation
@@ -272,11 +284,13 @@ def run_genetic_algorithm(
             best_solution = deepcopy(current_best)
             best_metrics = current_metrics
 
-        print(
-            f"Generation {generation:03d} | "
-            f"best penalty: {best_metrics['total_penalty']:.2f} | "
-            f"current best: {current_metrics['total_penalty']:.2f}"
-        )
+        if verbose:
+            print(
+                f"Generation {generation:03d} | "
+                f"best penalty: {best_metrics['total_penalty']:.2f} | "
+                f"current best: {current_metrics['total_penalty']:.2f}",
+                flush=True,
+            )
 
 
         new_population = [
@@ -348,8 +362,8 @@ if __name__ == "__main__":
 
     best_solution, best_metrics = run_genetic_algorithm(
         instance,
-        population_size=100,
-        generations=100,
+        population_size=200,
+        generations=200,
         mutation_rate=0.10,
         elite_size=5,
         tournament_size=3,
