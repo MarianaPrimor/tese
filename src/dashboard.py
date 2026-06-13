@@ -10,14 +10,18 @@ from generate_instance import load_real_instance
 from geneticalgorithm import run_genetic_algorithm
 from evaluator import (
     create_refs_by_id,
+    compute_max_values,
     evaluate_solution,
     get_available_line_time_for_day,
+    get_capacity_tolerance_for_day,
     get_production_time,
     get_standard_operators_for_day,
     get_setup,
     get_valid_days_for_ref,
     TIME_BUCKET_MIN,
     valid_lines_for_ref,
+    normalised_fitness,
+    normalised_fitness_breakdown,
 )
 
 
@@ -36,7 +40,6 @@ ELITE_SIZE = 5
 TOURNAMENT_SIZE = 3
 RANDOM_SEED = 42
 LUNCH_BREAK_MIN = 30
-OVERLOAD_TOLERANCE_MIN = 30
 
 
 def format_date(value):
@@ -179,6 +182,50 @@ def get_planning_month(instance):
         return f"{month_names[first_day.month]} {first_day.year}"
 
     return "horizonte de planeamento"
+
+
+def build_instance_signature(instance):
+    demand_signature = tuple(
+        (
+            index,
+            str(order.get("ref_id", "")).strip(),
+            order.get("master_boxes", 0),
+            order.get("delivery_date"),
+        )
+        for index, order in enumerate(instance.get("demand", []))
+    )
+    reference_signature = tuple(
+        sorted(
+            (
+                str(ref.get("id", "")).strip(),
+                ref.get("economic_value_per_master_box", 0),
+            )
+            for ref in instance.get("refs", [])
+        )
+    )
+    operating_signature = (
+        "normalised_objective_v3",
+        tuple(instance.get("working_days", [])),
+        tuple(sorted(instance.get("daily_capacity_min", {}).items())),
+        tuple(sorted(instance.get("standard_operators_by_day", {}).items())),
+    )
+
+    return demand_signature, reference_signature, operating_signature
+
+
+def validate_solution_orders(solution, instance):
+    expected_ids = set(range(len(instance.get("demand", []))))
+    solution_ids = [item.get("order_id") for item in solution]
+    actual_ids = set(solution_ids)
+    duplicates = sorted(
+        order_id
+        for order_id in actual_ids
+        if solution_ids.count(order_id) > 1
+    )
+    missing = sorted(expected_ids - actual_ids)
+    unexpected = sorted(actual_ids - expected_ids)
+
+    return duplicates, missing, unexpected
 
 
 def get_delivery_date(instance, solution_item):
@@ -423,10 +470,10 @@ def build_scenario_comparison_df(ga_metrics, manual_metrics):
             "min",
         ),
         (
-            "Excesso horário de operadores",
-            ga_metrics.get("total_operator_excess_by_time", 0),
-            manual_metrics.get("total_operator_excess_by_time", 0),
-            "min",
+            "Utilização dos operadores (operador-min)",
+            ga_metrics.get("operator_usage_minutes", 0),
+            manual_metrics.get("operator_usage_minutes", 0),
+            "max",
         ),
         (
             "Valor económico planeado",
@@ -523,12 +570,97 @@ def build_compact_schedule_df(instance, plan_df, best_metrics):
             max_utilization = max(max_utilization, utilization)
             max_excess = max(max_excess, excess)
 
-        if max_excess >= OVERLOAD_TOLERANCE_MIN:
+        if max_excess > get_capacity_tolerance_for_day(instance, day):
             row["Status"] = "Overloaded"
         elif max_utilization >= 90:
             row["Status"] = "Near limit"
         else:
             row["Status"] = "OK"
+
+        rows.append(row)
+
+    return pd.DataFrame(rows)
+
+
+def add_normalised_fitness_metrics(metrics, max_values):
+    raw_total_penalty = metrics.get("total_penalty", 0)
+    breakdown = normalised_fitness_breakdown(metrics, max_values)
+    score = normalised_fitness(metrics, max_values)
+
+    metrics["raw_total_penalty"] = raw_total_penalty
+    metrics["normalised_fitness"] = score
+    metrics["normalised_fitness_breakdown"] = breakdown
+    metrics["total_penalty"] = score
+    metrics["max_values"] = max_values
+    return metrics
+
+
+def build_daily_product_schedule_df(instance, plan_df, metrics):
+    scheduled_df = plan_df[
+        (plan_df["Status"] == "Scheduled")
+        & (plan_df["Line"].isin(instance["final_lines"]))
+    ].copy()
+    scheduled_df["_line_order"] = scheduled_df["Line"].map(
+        {line: index for index, line in enumerate(instance["final_lines"])}
+    )
+
+    products_by_day = {}
+    max_products = 0
+
+    for day in range(1, instance["n_days"] + 1):
+        day_products = scheduled_df[scheduled_df["Day"] == day].sort_values(
+            ["_line_order", "Seq."]
+        )
+        products_by_day[day] = day_products
+        max_products = max(max_products, len(day_products))
+
+    rows = []
+
+    for day in range(1, instance["n_days"] + 1):
+        row = {
+            "Data de produção": get_production_date(instance, day),
+            "Dia": day,
+            "Turnos": instance.get("daily_shifts", {}).get(day, 1),
+        }
+
+        for position, (_, product) in enumerate(
+            products_by_day[day].iterrows(),
+            start=1,
+        ):
+            row[f"Linha {position}"] = product["Line"]
+            row[f"Produto {position}"] = product["Reference"]
+            row[f"Quantidade {position}"] = product["Master boxes"]
+
+        for position in range(len(products_by_day[day]) + 1, max_products + 1):
+            row[f"Linha {position}"] = ""
+            row[f"Produto {position}"] = ""
+            row[f"Quantidade {position}"] = ""
+
+        max_utilization = 0
+        max_excess = 0
+
+        for line in instance["final_lines"]:
+            production_time = metrics["production_time_by_day_line"].get(
+                (day, line),
+                0,
+            )
+            setup_time = metrics["setup_time_by_day_line"].get(
+                (day, line),
+                0,
+            )
+            available = get_available_line_time_for_day(instance, day)
+            occupied = production_time + setup_time
+            excess = max(0, occupied - available)
+            utilization = occupied / available * 100 if available else 0
+            max_excess = max(max_excess, excess)
+            max_utilization = max(max_utilization, utilization)
+
+        if max_excess > get_capacity_tolerance_for_day(instance, day):
+            row["Estado"] = "Sobrecarga"
+        elif max_utilization >= 90:
+            row["Estado"] = "Perto do limite"
+        else:
+            row["Estado"] = "OK"
 
         rows.append(row)
 
@@ -660,12 +792,14 @@ def build_operations_df(instance, best_metrics):
 
 def build_penalty_df(best_metrics):
     rows = [
-        {"Component": "Capacity", "Penalty": best_metrics.get("total_capacity_excess", 0)},
-        {"Component": "Delay", "Penalty": best_metrics.get("delay_days_total", 0)},
+        {"Component": "Delay", "Penalty": best_metrics.get("delay_penalty", 0)},
         {"Component": "Postponement", "Penalty": best_metrics.get("postponement_penalty", 0)},
-        {"Component": "Hourly operators", "Penalty": best_metrics.get("hourly_operator_penalty", 0)},
         {"Component": "Setup", "Penalty": best_metrics.get("setup_penalty", 0)},
         {"Component": "Economic reward", "Penalty": -best_metrics.get("economic_value_reward", 0)},
+        {
+            "Component": "Operator utilization reward",
+            "Penalty": -best_metrics.get("operator_utilization_reward", 0),
+        },
     ]
 
     return pd.DataFrame(rows)
@@ -724,9 +858,11 @@ def light_table_style(df):
 
 
 def render_interactive_table(df, key, height=420):
-    display_data = light_table_style(df)
+    arrow_df = df.copy()
+    arrow_df = arrow_df.replace("", pd.NA).convert_dtypes()
+    display_data = light_table_style(arrow_df)
 
-    if "Estado" in df.columns or "Status" in df.columns:
+    if "Estado" in arrow_df.columns or "Status" in arrow_df.columns:
         display_data = display_data.apply(highlight_status, axis=1)
 
     st.dataframe(
@@ -736,7 +872,7 @@ def render_interactive_table(df, key, height=420):
         height=height,
     )
 
-    csv_data = df.to_csv(index=False).encode("utf-8-sig")
+    csv_data = arrow_df.to_csv(index=False).encode("utf-8-sig")
 
     st.download_button(
         label="Descarregar tabela em CSV",
@@ -1322,6 +1458,7 @@ instance = apply_dashboard_overrides(
     end_times_by_day,
     shifts_by_day,
 )
+current_instance_signature = build_instance_signature(instance)
 
 scenario_rows = []
 
@@ -1362,6 +1499,7 @@ if run_button:
         st.session_state["ga_solution"] = deepcopy(best_solution)
         st.session_state["ga_metrics"] = deepcopy(best_metrics)
         st.session_state["ga_planning_month"] = planning_month
+        st.session_state["ga_instance_signature"] = current_instance_signature
         st.session_state["scenario_version"] = (
             st.session_state.get("scenario_version", 0) + 1
         )
@@ -1373,8 +1511,43 @@ if "ga_solution" not in st.session_state:
     st.info("Pressione o botão para gerar o plano de produção.")
     st.stop()
 
+if st.session_state.get("ga_instance_signature") != current_instance_signature:
+    for session_key in [
+        "ga_solution",
+        "ga_metrics",
+        "ga_planning_month",
+        "ga_instance_signature",
+    ]:
+        st.session_state.pop(session_key, None)
+
+    st.warning(
+        "Os inputs ou os parâmetros operacionais foram alterados. "
+        "Gere novamente o plano para evitar misturar uma solução antiga "
+        "com a instância atual."
+    )
+    st.stop()
+
 best_solution = deepcopy(st.session_state["ga_solution"])
-best_metrics = evaluate_solution(best_solution, instance)
+duplicate_orders, missing_orders, unexpected_orders = validate_solution_orders(
+    best_solution,
+    instance,
+)
+
+if duplicate_orders or missing_orders or unexpected_orders:
+    st.error(
+        "A solução guardada não contém exatamente uma ocorrência de cada ordem. "
+        f"Duplicadas: {duplicate_orders or 'nenhuma'}; "
+        f"em falta: {missing_orders or 'nenhuma'}; "
+        f"inesperadas: {unexpected_orders or 'nenhuma'}. "
+        "Gere novamente o plano."
+    )
+    st.stop()
+
+max_values = compute_max_values(instance)
+best_metrics = add_normalised_fitness_metrics(
+    evaluate_solution(best_solution, instance),
+    max_values,
+)
 planning_month = st.session_state.get(
     "ga_planning_month",
     get_planning_month(instance),
@@ -1383,7 +1556,11 @@ planning_month = st.session_state.get(
 st.success(f"Plano gerado com sucesso para {planning_month}.")
 
 plan_df = build_plan_df(instance, best_solution)
-compact_df = build_compact_schedule_df(instance, plan_df, best_metrics)
+daily_product_schedule_df = build_daily_product_schedule_df(
+    instance,
+    plan_df,
+    best_metrics,
+)
 product_matrix_df = build_product_matrix_df(instance, plan_df)
 capacity_df = build_capacity_df(instance, best_metrics)
 time_slot_df = build_time_slot_activity_df(instance, best_metrics)
@@ -1463,7 +1640,10 @@ if scenario_errors:
         + "\n- ".join(scenario_errors)
     )
 else:
-    manual_metrics = evaluate_solution(manual_solution, instance)
+    manual_metrics = add_normalised_fitness_metrics(
+        evaluate_solution(manual_solution, instance),
+        max_values,
+    )
     comparison_df = build_scenario_comparison_df(
         best_metrics,
         manual_metrics,
@@ -1471,14 +1651,14 @@ else:
 
     comparison_col1, comparison_col2 = st.columns(2)
     comparison_col1.metric(
-        "Penalização do GA",
-        f"{best_metrics.get('total_penalty', 0):,.2f}",
+        "Fitness normalizada do GA",
+        f"{best_metrics.get('total_penalty', 0):,.6f}",
     )
     comparison_col2.metric(
-        "Penalização do cenário manual",
-        f"{manual_metrics.get('total_penalty', 0):,.2f}",
+        "Fitness normalizada do cenário manual",
+        f"{manual_metrics.get('total_penalty', 0):,.6f}",
         delta=(
-            f"{manual_metrics.get('total_penalty', 0) - best_metrics.get('total_penalty', 0):,.2f}"
+            f"{manual_metrics.get('total_penalty', 0) - best_metrics.get('total_penalty', 0):,.6f}"
         ),
         delta_color="inverse",
     )
@@ -1490,7 +1670,7 @@ else:
     )
 
     manual_plan_df = build_plan_df(instance, manual_solution)
-    manual_compact_df = build_compact_schedule_df(
+    manual_schedule_display = build_daily_product_schedule_df(
         instance,
         manual_plan_df,
         manual_metrics,
@@ -1498,25 +1678,6 @@ else:
     manual_capacity_df = build_capacity_df(instance, manual_metrics)
 
     st.markdown("**Sequência resultante do cenário manual**")
-    manual_schedule_display = manual_compact_df.rename(columns={
-        "Production date": "Data de produção",
-        "Day": "Dia",
-        "Shifts": "Turnos",
-        "L1 sequence": "Sequência L1",
-        "L1 production": "Produção L1",
-        "L1 setup": "Setup L1",
-        "L1 excess": "Excesso L1",
-        "L2 sequence": "Sequência L2",
-        "L2 production": "Produção L2",
-        "L2 setup": "Setup L2",
-        "L2 excess": "Excesso L2",
-        "Status": "Estado",
-    })
-    manual_schedule_display["Estado"] = manual_schedule_display["Estado"].replace({
-        "Overloaded": "Sobrecarga",
-        "Near limit": "Perto do limite",
-        "OK": "OK",
-    })
     render_interactive_table(
         manual_schedule_display,
         key="sequencia_cenario_manual",
@@ -1543,27 +1704,8 @@ else:
     )
 
 st.subheader("Sequência diária de produção")
-sequencing_df = compact_df.rename(columns={
-    "Production date": "Data de produção",
-    "Day": "Dia",
-    "L1 sequence": "Sequência L1",
-    "L1 production": "Produção L1",
-    "L1 setup": "Setup L1",
-    "L1 excess": "Excesso L1",
-    "L2 sequence": "Sequência L2",
-    "L2 production": "Produção L2",
-    "L2 setup": "Setup L2",
-    "L2 excess": "Excesso L2",
-    "Status": "Estado",
-})
-sequencing_df = sequencing_df.rename(columns={"Shifts": "Turnos"})
-sequencing_df["Estado"] = sequencing_df["Estado"].replace({
-    "Overloaded": "Sobrecarga",
-    "Near limit": "Perto do limite",
-    "OK": "OK",
-})
 render_interactive_table(
-    sequencing_df,
+    daily_product_schedule_df,
     key="sequencia_diaria_producao",
     height=420,
 )

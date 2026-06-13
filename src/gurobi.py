@@ -6,23 +6,28 @@ from generate_instance import load_real_instance, calculate_production_time
 from evaluator import (
     create_refs_by_id,
     valid_lines_for_ref,
+    generate_random_solution,
     evaluate_solution,
     print_metrics,
     print_validation_report,
     get_valid_days_for_ref,
     get_production_time as evaluator_get_production_time,
     get_setup,
-    DELAY_PENALTY,
-    CAPACITY_PENALTY,
-    SETUP_PENALTY,
-    POSTPONEMENT_PENALTY,
-    ECONOMIC_VALUE_REWARD,
+    get_production_operators,
+    get_finishing_operators,
+    get_available_line_time_for_day,
+    get_capacity_tolerance_for_day,
+    compute_max_values,
+    normalised_fitness,
+    normalised_fitness_breakdown,
+    POSTPONEMENT_NORMALIZED_WEIGHT,
+    ECONOMIC_VALUE_NORMALIZED_WEIGHT,
+    DELAY_NORMALIZED_WEIGHT,
+    SETUP_NORMALIZED_WEIGHT,
+    OPERATOR_UTILIZATION_NORMALIZED_WEIGHT,
+    FINISHING_DELAY_L1_MIN,
 )
-
-
-DELAY_WEIGHT = 100
-CAPACITY_WEIGHT = 50
-OPERATOR_WEIGHT = 80
+from geneticalgorithm import enforce_hard_constraints
 
 
 def get_production_time(ref, line, master_boxes):
@@ -57,6 +62,15 @@ def get_selected_assignment(x, order, lines, days):
     return None, None
 
 
+def get_calendar_date_for_day(instance, day):
+    working_days = instance.get("working_days", [])
+
+    if day is not None and 1 <= day <= len(working_days):
+        return working_days[day - 1]
+
+    return None
+
+
 
 def _selected_assignment(x, order, lines, days):
     for line in lines:
@@ -67,7 +81,103 @@ def _selected_assignment(x, order, lines, days):
     return None, None
 
 
-def solve_simplified_with_gurobi(instance):
+def extract_full_solution(instance, x, postponed, orders, lines, days, positions):
+    solution = []
+    selected_variables = []
+
+    for l in lines:
+        for d in days:
+            for p in positions:
+                for o in orders:
+                    if x[o, l, d, p].X <= 0.5:
+                        continue
+
+                    order = instance["demand"][o]
+                    selected_variables.append(x[o, l, d, p])
+                    solution.append({
+                        "order_id": o,
+                        "ref_id": str(order["ref_id"]).strip(),
+                        "master_boxes": order["master_boxes"],
+                        "delivery_date": order["delivery_date"],
+                        "delivery_calendar_date": order.get("delivery_calendar_date"),
+                        "adjusted_delivery_date": order.get("adjusted_delivery_date"),
+                        "priority": order.get("priority", "Medium"),
+                        "day": d,
+                        "line": l,
+                        "postponed": False,
+                    })
+
+    for o in orders:
+        if postponed[o].X <= 0.5:
+            continue
+
+        order = instance["demand"][o]
+        selected_variables.append(postponed[o])
+        solution.append({
+            "order_id": o,
+            "ref_id": str(order["ref_id"]).strip(),
+            "master_boxes": order["master_boxes"],
+            "delivery_date": order["delivery_date"],
+            "delivery_calendar_date": order.get("delivery_calendar_date"),
+            "adjusted_delivery_date": order.get("adjusted_delivery_date"),
+            "priority": order.get("priority", "Medium"),
+            "day": None,
+            "line": None,
+            "postponed": True,
+        })
+
+    return solution, selected_variables
+
+
+def apply_feasible_mip_start(
+    model,
+    instance,
+    x,
+    postponed,
+    orders,
+    lines,
+    days,
+    positions,
+    seed=42,
+):
+    """Seed Gurobi with a feasible plan built by the GA hard-constraint repair."""
+    initial_solution = enforce_hard_constraints(
+        generate_random_solution(instance, seed=seed),
+        instance,
+    )
+    genes_by_order = {
+        gene["order_id"]: gene
+        for gene in initial_solution
+    }
+    next_position = {
+        (line, day): 1
+        for line in lines
+        for day in days
+    }
+
+    for o in orders:
+        gene = genes_by_order.get(o)
+
+        if gene is None or gene.get("postponed"):
+            postponed[o].Start = 1
+            continue
+
+        line = gene.get("line")
+        day = gene.get("day")
+        position = next_position.get((line, day))
+
+        if position not in positions:
+            postponed[o].Start = 1
+            continue
+
+        x[o, line, day, position].Start = 1
+        postponed[o].Start = 0
+        next_position[(line, day)] += 1
+
+    model.update()
+
+
+def _solve_simplified_with_gurobi_legacy(instance):
     start_time = time.perf_counter()
     model = gp.Model("doceleia_scheduling")
 
@@ -80,6 +190,13 @@ def solve_simplified_with_gurobi(instance):
     print("Orders:", orders)
     print("Lines:", lines)
     print("Days:", days)
+    print(
+        "Working-day calendar:",
+        {
+            day: get_calendar_date_for_day(instance, day)
+            for day in days
+        },
+    )
 
     x = {}
 
@@ -378,6 +495,7 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
     days = list(range(1, instance["n_days"] + 1))
     positions = list(range(1, len(orders) + 1))
     refs_by_id = create_refs_by_id(instance)
+    max_values = compute_max_values(instance)
 
     x = model.addVars(
         orders,
@@ -398,14 +516,6 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
         vtype=GRB.CONTINUOUS,
         name="delay"
     )
-    capacity_excess = model.addVars(
-        lines,
-        days,
-        lb=0,
-        vtype=GRB.CONTINUOUS,
-        name="capacity_excess"
-    )
-
     pair = {}
 
     for i in orders:
@@ -544,12 +654,16 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
             model.addConstr(
                 gp.quicksum(production_terms)
                 + gp.quicksum(setup_terms)
-                <= instance["available_line_time_min"] + capacity_excess[l, d],
+                <= (
+                    get_available_line_time_for_day(instance, d)
+                    + get_capacity_tolerance_for_day(instance, d)
+                ),
                 name=f"capacity_{l}_{d}"
             )
 
-    postponement_expr = gp.LinExpr()
+    postponed_volume_expr = gp.LinExpr()
     economic_reward_expr = gp.LinExpr()
+    operator_usage_expr = gp.LinExpr()
 
     for o in orders:
         order = instance["demand"][o]
@@ -560,27 +674,104 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
             * (ref.get("economic_value_per_master_box") or 0)
         )
 
-        postponement_expr += master_boxes * POSTPONEMENT_PENALTY * postponed[o]
-        economic_reward_expr += economic_value * gp.quicksum(
+        scheduled_expr = gp.quicksum(
             x[o, l, d, p]
             for l in lines
             for d in days
             for p in positions
         )
+        postponed_volume_expr += master_boxes * postponed[o]
+        economic_reward_expr += economic_value * scheduled_expr
+
+        for l in lines:
+            production_time = evaluator_get_production_time(
+                ref,
+                l,
+                master_boxes,
+            )
+
+            if production_time is None:
+                continue
+
+            production_operator_minutes = (
+                production_time * get_production_operators(ref, l)
+            )
+            finishing_operator_minutes = 0
+
+            if l == "L1":
+                finishing_operator_minutes = (
+                    max(0, production_time - FINISHING_DELAY_L1_MIN)
+                    * get_finishing_operators(ref, l)
+                )
+            elif l == "L2":
+                finishing_operator_minutes = (
+                    production_time
+                    * get_finishing_operators(ref, l)
+                )
+
+            operator_usage_expr += (
+                production_operator_minutes
+                + finishing_operator_minutes
+            ) * gp.quicksum(
+                x[o, l, d, p]
+                for d in days
+                for p in positions
+            )
+
+    for i in orders:
+        ref_i = refs_by_id[str(instance["demand"][i]["ref_id"]).strip()]
+
+        for j in orders:
+            if i == j:
+                continue
+
+            ref_j = refs_by_id[str(instance["demand"][j]["ref_id"]).strip()]
+            setup_time = get_setup(
+                instance,
+                ref_i["family"],
+                ref_j["family"],
+            )
+
+            for l in lines:
+                setup_operators = get_production_operators(ref_i, l)
+
+                for d in days:
+                    for p in positions[1:]:
+                        operator_usage_expr += (
+                            setup_time
+                            * setup_operators
+                            * pair[i, j, l, d, p]
+                        )
 
     objective = (
-        DELAY_PENALTY * gp.quicksum(delay[o] for o in orders)
-        + CAPACITY_PENALTY * gp.quicksum(
-            capacity_excess[l, d]
-            for l in lines
-            for d in days
-        )
-        + SETUP_PENALTY * setup_expr
-        + postponement_expr
-        - ECONOMIC_VALUE_REWARD * economic_reward_expr
+        POSTPONEMENT_NORMALIZED_WEIGHT
+        * postponed_volume_expr
+        / max_values["postponed_volume"]
+        + DELAY_NORMALIZED_WEIGHT
+        * gp.quicksum(delay[o] for o in orders)
+        / max_values["delay_days"]
+        + SETUP_NORMALIZED_WEIGHT
+        * setup_expr
+        / max_values["setup_time"]
+        - ECONOMIC_VALUE_NORMALIZED_WEIGHT
+        * economic_reward_expr
+        / max_values["economic_value"]
+        - OPERATOR_UTILIZATION_NORMALIZED_WEIGHT
+        * operator_usage_expr
+        / max_values["operator_minutes"]
     )
 
     model.setObjective(objective, GRB.MINIMIZE)
+    apply_feasible_mip_start(
+        model,
+        instance,
+        x,
+        postponed,
+        orders,
+        lines,
+        days,
+        positions,
+    )
 
     print("Full Gurobi model")
     print("Orders/lots:", len(orders))
@@ -588,55 +779,96 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
     print("Days:", days)
     print("Positions:", len(positions))
 
-    model.optimize()
+    operator_cuts = 0
+    solution = None
+    metrics = None
 
-    if model.SolCount == 0:
-        raise RuntimeError(f"Gurobi did not find a solution. Status: {model.Status}")
+    while True:
+        elapsed = time.perf_counter() - start_time
+        remaining_time = max(1, time_limit - elapsed)
+        model.Params.TimeLimit = remaining_time
+        model.optimize()
 
-    solution = []
+        if model.SolCount == 0:
+            raise RuntimeError(
+                f"Gurobi did not find a solution. Status: {model.Status}"
+            )
 
-    for l in lines:
-        for d in days:
-            for p in positions:
-                for o in orders:
-                    if x[o, l, d, p].X > 0.5:
-                        order = instance["demand"][o]
-                        solution.append({
-                            "order_id": o,
-                            "ref_id": str(order["ref_id"]).strip(),
-                            "master_boxes": order["master_boxes"],
-                            "delivery_date": order["delivery_date"],
-                            "delivery_calendar_date": order.get("delivery_calendar_date"),
-                            "adjusted_delivery_date": order.get("adjusted_delivery_date"),
-                            "priority": order.get("priority", "Medium"),
-                            "day": d,
-                            "line": l,
-                            "postponed": False,
-                        })
+        candidate_solution, selected_variables = extract_full_solution(
+            instance,
+            x,
+            postponed,
+            orders,
+            lines,
+            days,
+            positions,
+        )
+        candidate_metrics = evaluate_solution(candidate_solution, instance)
 
-    for o in orders:
-        if postponed[o].X > 0.5:
-            order = instance["demand"][o]
-            solution.append({
-                "order_id": o,
-                "ref_id": str(order["ref_id"]).strip(),
-                "master_boxes": order["master_boxes"],
-                "delivery_date": order["delivery_date"],
-                "delivery_calendar_date": order.get("delivery_calendar_date"),
-                "adjusted_delivery_date": order.get("adjusted_delivery_date"),
-                "priority": order.get("priority", "Medium"),
-                "day": None,
-                "line": None,
-                "postponed": True,
-            })
+        if candidate_metrics["operator_violations"] == 0:
+            solution = candidate_solution
+            metrics = candidate_metrics
+            break
 
-    metrics = evaluate_solution(solution, instance)
+        operator_cuts += 1
+        model.addConstr(
+            gp.quicksum(selected_variables) <= len(selected_variables) - 1,
+            name=f"operator_feasibility_cut_{operator_cuts}",
+        )
+
+        if verbose:
+            print(
+                f"Operator feasibility cut {operator_cuts}: "
+                f"{candidate_metrics['operator_violations']} violating slots",
+                flush=True,
+            )
+
+        if time.perf_counter() - start_time >= time_limit:
+            raise RuntimeError(
+                "Time limit reached before finding a solution that respects "
+                "the hourly operator constraint."
+            )
+
+    raw_total_penalty = metrics["total_penalty"]
+    breakdown = normalised_fitness_breakdown(metrics, max_values)
+    metrics["raw_total_penalty"] = raw_total_penalty
+    metrics["normalised_fitness"] = normalised_fitness(metrics, max_values)
+    metrics["normalised_fitness_breakdown"] = breakdown
+    metrics["total_penalty"] = metrics["normalised_fitness"]
+    metrics["max_values"] = max_values
+    metrics["gurobi_objective"] = model.ObjVal
+    metrics["objective_evaluator_difference"] = (
+        model.ObjVal - metrics["normalised_fitness"]
+    )
     metrics["computation_time_sec"] = time.perf_counter() - start_time
 
+    status_name = {
+        GRB.OPTIMAL: "OPTIMAL",
+        GRB.TIME_LIMIT: "TIME_LIMIT",
+        GRB.INTERRUPTED: "INTERRUPTED",
+    }.get(model.Status, str(model.Status))
+
     print("\n=== FULL GUROBI SUMMARY ===")
-    print(f"Gurobi objective: {model.ObjVal:.2f}")
-    print(f"Gurobi best bound: {model.ObjBound:.2f}")
+    print(f"Solver status: {status_name}")
+    print(f"Gurobi objective: {model.ObjVal:.6f}")
+    print(f"Evaluator normalised fitness: {metrics['normalised_fitness']:.6f}")
+    print(
+        "Objective/evaluator difference: "
+        f"{metrics['objective_evaluator_difference']:+.6f}"
+    )
+    print(f"Gurobi best bound: {model.ObjBound:.6f}")
     print(f"Gurobi MIP gap: {model.MIPGap * 100:.2f}%")
+    print(f"Operator feasibility cuts: {operator_cuts}")
+    print("\n=== NORMALISED FITNESS BREAKDOWN ===")
+    print(f"Postponement contribution: {breakdown['postponement']:+.6f}")
+    print(f"Delay contribution: {breakdown['delay']:+.6f}")
+    print(f"Setup contribution: {breakdown['setup']:+.6f}")
+    print(f"Economic value contribution: {breakdown['economic_value']:+.6f}")
+    print(
+        "Operator utilisation contribution: "
+        f"{breakdown['operator_utilisation']:+.6f}"
+    )
+    print(f"Normalised fitness Z: {breakdown['total']:+.6f}")
     print_metrics(metrics)
 
     return solution, metrics, {
@@ -644,7 +876,19 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
         "best_bound": model.ObjBound,
         "mip_gap": model.MIPGap,
         "status": model.Status,
+        "status_name": status_name,
+        "operator_feasibility_cuts": operator_cuts,
     }
+
+
+def solve_simplified_with_gurobi(instance, time_limit=1800, verbose=True):
+    """Compatibility entry point using the current official model."""
+    return solve_with_gurobi(
+        instance,
+        time_limit=time_limit,
+        verbose=verbose,
+    )
+
 
 if __name__ == "__main__":
     instance = load_real_instance("../Inputs_EmpresaX_small.xlsx")
@@ -655,13 +899,18 @@ if __name__ == "__main__":
         verbose=True,
     )
 
-    print("\n=== GUROBI OPTIMAL SCHEDULE ===")
+    print("\n=== BEST GUROBI SCHEDULE FOUND ===")
     for item in solution:
-        status = (
-            "POSTPONED"
-            if item.get("postponed")
-            else f"day {item['day']} | {item['line']}"
-        )
+        if item.get("postponed"):
+            status = "POSTPONED"
+        else:
+            calendar_date = get_calendar_date_for_day(
+                instance,
+                item["day"],
+            )
+            status = (
+                f"day {item['day']} ({calendar_date}) | {item['line']}"
+            )
 
         print(
             f"{item['order_id']:02d}. "
@@ -673,7 +922,7 @@ if __name__ == "__main__":
 
     print("\n=== GUROBI METRICS FOR COMPARISON ===")
     print(f"Computation time: {metrics['computation_time_sec']:.2f} sec")
-    print(f"Total penalty: {metrics['total_penalty']:.2f}")
+    print(f"Normalised fitness: {metrics['total_penalty']:.6f}")
     print(f"Total economic reward: {metrics['economic_value_reward']:.2f}")
     print(f"Scheduled economic value: {metrics['scheduled_economic_value']:.2f}")
     print(f"Postponed economic value: {metrics['postponed_economic_value']:.2f}")

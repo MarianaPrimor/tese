@@ -1001,7 +1001,7 @@ def _split_large_orders(demand, refs, final_lines, available_line_time_min):
     return split_demand
 
 def load_real_instance(
-    excel_path="Inputs_EmpresaX.xlsx",
+    excel_path="Inputs_EmpresaXReal.xlsx",
     n_synthetic_orders=15,
     seed=42
 ):
@@ -1300,6 +1300,6 @@ def print_instance_summary(instance):
 
 
 if __name__ == "__main__":
-    instance = load_real_instance(excel_path="../Inputs_EmpresaX_small.xlsx")
+    instance = load_real_instance(excel_path="../Inputs_EmpresaX.xlsx")
     print_instance_summary(instance)
 
