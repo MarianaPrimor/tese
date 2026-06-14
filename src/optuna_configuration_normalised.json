@@ -1,0 +1,28 @@
+{
+  "objective_version": "normalised_v2_l1_l2_finishing",
+  "instance_file": "C:\\Users\\Kaizen\\Documents\\tese\\Inputs_EmpresaX.xlsx",
+  "instance_signature": "Inputs_EmpresaX.xlsx:56099:1781352793658301500",
+  "study_name": "ga_parameter_tuning_normalised_v2",
+  "storage_file": "C:\\Users\\Kaizen\\Documents\\tese\\src\\optuna_study_normalised.db",
+  "n_completed_trials_target": 60,
+  "max_generations": 200,
+  "seeds": [
+    0,
+    42,
+    99
+  ],
+  "population_size": [
+    150,
+    200
+  ],
+  "mutation_rate": [
+    0.05,
+    0.1
+  ],
+  "stagnation_k": [
+    20,
+    60
+  ],
+  "elite_size": 5,
+  "tournament_size": 3
+}
