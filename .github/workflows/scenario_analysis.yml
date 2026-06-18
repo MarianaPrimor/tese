@@ -1,0 +1,127 @@
+name: Scenario Analysis — Overnight Run
+
+on:
+  # Trigger manually from GitHub UI
+  workflow_dispatch:
+
+  # Automatic: every night at 23:00 Lisbon time (22:00 UTC in winter, 21:00 UTC in summer)
+  schedule:
+    - cron: '0 22 * * *'
+
+jobs:
+
+  # ── Axis 1: Demand scaling ──────────────────────────────────────────────────
+  axis1-demand:
+    name: "Axis 1 — Demand Scaling"
+    runs-on: self-hosted          # change to ubuntu-latest to use GitHub's servers
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Axis 1
+        run: python scenario_analysis.py --axis 1
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: axis1-results
+          path: |
+            outputs/scenario_analysis/results/eixo1_demand.csv
+            outputs/scenario_analysis/plots/eixo1_*.png
+          retention-days: 30
+
+  # ── Axis 2: Operator sweep ──────────────────────────────────────────────────
+  axis2-operators:
+    name: "Axis 2 — Operator Sweep"
+    runs-on: self-hosted
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Axis 2
+        run: python scenario_analysis.py --axis 2
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: axis2-results
+          path: |
+            outputs/scenario_analysis/results/eixo2_operators.csv
+            outputs/scenario_analysis/plots/eixo2_*.png
+          retention-days: 30
+
+  # ── Axis 3: Weight sensitivity (heaviest — runs last) ──────────────────────
+  axis3-weights:
+    name: "Axis 3 — Weight Sensitivity (OFAT)"
+    runs-on: self-hosted
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Axis 3
+        run: python scenario_analysis.py --axis 3
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: axis3-results
+          path: |
+            outputs/scenario_analysis/results/eixo3_weights.csv
+            outputs/scenario_analysis/plots/eixo3_*.png
+          retention-days: 30
+
+  # ── Collect everything and commit back to repo ──────────────────────────────
+  collect-results:
+    name: "Collect & Commit Results"
+    runs-on: self-hosted
+    needs: [axis1-demand, axis2-operators, axis3-weights]   # waits for all 3
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: outputs/scenario_analysis/
+
+      - name: Commit results to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add outputs/scenario_analysis/
+          git commit -m "chore: scenario analysis results $(date +'%Y-%m-%d')" || echo "Nothing to commit"
+          git push
