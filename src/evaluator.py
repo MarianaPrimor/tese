@@ -22,18 +22,14 @@ FINISHING_LUNCH_END = 14 * 60
 # OBJECTIVE WEIGHTS AND HARD-CONSTRAINT TOLERANCES
 # ============================================================
 
-DELAY_PENALTY = 1000
-SETUP_PENALTY = 100
-POSTPONEMENT_PENALTY = 10000
-ECONOMIC_VALUE_REWARD = 1
-OPERATOR_UTILIZATION_REWARD = 1
-CAPACITY_TOLERANCE_MIN = 30
 
-POSTPONEMENT_NORMALIZED_WEIGHT = 0.40
-ECONOMIC_VALUE_NORMALIZED_WEIGHT = 0.30
-DELAY_NORMALIZED_WEIGHT = 0.15
-SETUP_NORMALIZED_WEIGHT = 0.10
-OPERATOR_UTILIZATION_NORMALIZED_WEIGHT = 0.05
+POSTPONEMENT_NORMALIZED_WEIGHT = 0.3
+ECONOMIC_VALUE_NORMALIZED_WEIGHT = 0.2
+DELAY_NORMALIZED_WEIGHT = 0.05
+SETUP_NORMALIZED_WEIGHT = 0.025
+CAPACITY_UTILIZATION_NORMALIZED_WEIGHT = 0.4
+OPERATOR_UTILIZATION_NORMALIZED_WEIGHT = 0.025
+CAPACITY_TOLERANCE_MIN = 30
 
 
 # ============================================================
@@ -105,10 +101,6 @@ def get_order_economic_value(item, ref):
     return item.get("master_boxes", 0) * (ref.get("economic_value_per_master_box") or 0)
 
 
-def get_postponement_penalty(master_boxes):
-    return master_boxes * POSTPONEMENT_PENALTY
-
-
 def compute_max_values(instance):
     refs_by_id = create_refs_by_id(instance)
     demand = instance.get("demand", [])
@@ -132,6 +124,7 @@ def compute_max_values(instance):
     )
     max_setup_time = len(demand) * max_setup_transition
     max_operator_minutes = 0
+    max_capacity_time = 0
 
     for day in range(1, instance.get("n_days", 0) + 1):
         shift_start = get_shift_start_for_day(instance, day)
@@ -146,12 +139,17 @@ def compute_max_values(instance):
             get_standard_operators_for_day(instance, day)
             * shift_duration
         )
+        max_capacity_time += (
+            get_available_line_time_for_day(instance, day)
+            * len(instance.get("final_lines", []))
+        )
 
     return {
         "postponed_volume": max(1, total_master_boxes),
         "delay_days": max(1, len(demand) * instance.get("n_days", 0)),
         "setup_time": max(1, max_setup_time),
         "economic_value": max(1, total_economic_value),
+        "capacity_time": max(1, max_capacity_time),
         "operator_minutes": max(1, max_operator_minutes),
     }
 
@@ -163,13 +161,26 @@ def _normalised_ratio(value, maximum):
     return min(1.0, max(0.0, value / maximum))
 
 
-def normalised_fitness_breakdown(metrics, max_values):
+DEFAULT_NORMALISED_WEIGHTS = {
+    "postponement": POSTPONEMENT_NORMALIZED_WEIGHT,
+    "delay": DELAY_NORMALIZED_WEIGHT,
+    "setup": SETUP_NORMALIZED_WEIGHT,
+    "economic_value": ECONOMIC_VALUE_NORMALIZED_WEIGHT,
+    "capacity_utilisation": CAPACITY_UTILIZATION_NORMALIZED_WEIGHT,
+    "operator_utilisation": OPERATOR_UTILIZATION_NORMALIZED_WEIGHT,
+}
+
+
+def normalised_fitness_breakdown(metrics, max_values, weights=None):
+    weights = DEFAULT_NORMALISED_WEIGHTS if weights is None else weights
+
     if metrics.get("infeasible_solution"):
         return {
             "postponement": float("inf"),
             "delay": 0,
             "setup": 0,
             "economic_value": 0,
+            "capacity_utilisation": 0,
             "operator_utilisation": 0,
             "total": float("inf"),
         }
@@ -190,26 +201,41 @@ def normalised_fitness_breakdown(metrics, max_values):
         metrics.get("scheduled_economic_value", 0),
         max_values["economic_value"],
     )
+    occupied_capacity_time = (
+        sum(metrics.get("production_time_by_day_line", {}).values())
+        + sum(metrics.get("setup_time_by_day_line", {}).values())
+    )
+    capacity_ratio = _normalised_ratio(
+        occupied_capacity_time,
+        max_values["capacity_time"],
+    )
     operator_ratio = _normalised_ratio(
         metrics.get("operator_usage_minutes", 0),
         max_values["operator_minutes"],
     )
 
     contributions = {
-        "postponement": POSTPONEMENT_NORMALIZED_WEIGHT * postponed_ratio,
-        "delay": DELAY_NORMALIZED_WEIGHT * delay_ratio,
-        "setup": SETUP_NORMALIZED_WEIGHT * setup_ratio,
-        "economic_value": -ECONOMIC_VALUE_NORMALIZED_WEIGHT * economic_ratio,
+        "postponement": weights["postponement"] * postponed_ratio,
+        "delay": weights["delay"] * delay_ratio,
+        "setup": weights["setup"] * setup_ratio,
+        "economic_value": -weights["economic_value"] * economic_ratio,
+        "capacity_utilisation": (
+            -weights.get("capacity_utilisation", 0) * capacity_ratio
+        ),
         "operator_utilisation": (
-            -OPERATOR_UTILIZATION_NORMALIZED_WEIGHT * operator_ratio
+            -weights.get("operator_utilisation", 0) * operator_ratio
         ),
     }
     contributions["total"] = sum(contributions.values())
     return contributions
 
 
-def normalised_fitness(metrics, max_values):
-    return normalised_fitness_breakdown(metrics, max_values)["total"]
+def normalised_fitness(metrics, max_values, weights=None):
+    return normalised_fitness_breakdown(
+        metrics,
+        max_values,
+        weights=weights,
+    )["total"]
 
 # ============================================================
 # RANDOM SOLUTION GENERATION
@@ -332,13 +358,11 @@ def get_production_time(ref, line, master_boxes):
     else:
         return None
 
-    raw_time = calculate_production_time(
+    return calculate_production_time(
         master_boxes,
         ref["cakes_per_box"],
         rate
     )
-
-    return round_up_to_bucket(raw_time)
 
 
 def get_finishing_time(ref, line, master_boxes):
@@ -435,6 +459,37 @@ def schedule_with_lunch(start_time, duration, lunch_start, lunch_end):
     return start_time, end_time
 
 
+def append_operation_segments(
+    operations,
+    operation,
+    lunch_start=None,
+    lunch_end=None,
+):
+    start = operation["start"]
+    end = operation["end"]
+
+    if end <= start:
+        return
+
+    if lunch_start is None or lunch_end is None:
+        operations.append(operation)
+        return
+
+    first_end = min(end, lunch_start)
+
+    if first_end > start:
+        first_segment = dict(operation)
+        first_segment["end"] = first_end
+        operations.append(first_segment)
+
+    second_start = max(start, lunch_end)
+
+    if end > second_start:
+        second_segment = dict(operation)
+        second_segment["start"] = second_start
+        operations.append(second_segment)
+
+
 def simulate_time_schedule(solution, instance):
     refs_by_id = create_refs_by_id(instance)
     operations = []
@@ -503,17 +558,22 @@ def simulate_time_schedule(solution, instance):
 
             prod_ops = get_production_operators(ref, line)
 
-            operations.append({
-                "order_id": item.get("order_id"),
-                "day": day,
-                "line": line,
-                "ref_id": item["ref_id"],
-                "master_boxes": master_boxes,
-                "operation": "production",
-                "start": prod_start,
-                "end": prod_end,
-                "operators": prod_ops,
-            })
+            append_operation_segments(
+                operations,
+                {
+                    "order_id": item.get("order_id"),
+                    "day": day,
+                    "line": line,
+                    "ref_id": item["ref_id"],
+                    "master_boxes": master_boxes,
+                    "operation": "production",
+                    "start": prod_start,
+                    "end": prod_end,
+                    "operators": prod_ops,
+                },
+                PRODUCTION_LUNCH_START,
+                PRODUCTION_LUNCH_END,
+            )
 
             finish_ops = get_finishing_operators(ref, line)
             finish_start = None
@@ -528,17 +588,22 @@ def simulate_time_schedule(solution, instance):
                 finish_end = prod_end
 
             if finish_start is not None and finish_ops > 0:
-                operations.append({
-                    "order_id": item.get("order_id"),
-                    "day": day,
-                    "line": line,
-                    "ref_id": item["ref_id"],
-                    "master_boxes": master_boxes,
-                    "operation": "finishing",
-                    "start": finish_start,
-                    "end": finish_end,
-                    "operators": finish_ops,
-                })
+                append_operation_segments(
+                    operations,
+                    {
+                        "order_id": item.get("order_id"),
+                        "day": day,
+                        "line": line,
+                        "ref_id": item["ref_id"],
+                        "master_boxes": master_boxes,
+                        "operation": "finishing",
+                        "start": finish_start,
+                        "end": finish_end,
+                        "operators": finish_ops,
+                    },
+                    FINISHING_LUNCH_START,
+                    FINISHING_LUNCH_END,
+                )
 
             current_time = prod_end
             previous_family = ref["family"]
@@ -570,6 +635,81 @@ def calculate_operator_usage_by_time(operations, instance):
 
     return usage, excess
 
+
+def calculate_operator_usage_exact(operations, instance):
+    events_by_day = {}
+
+    for op in operations:
+        if op["end"] <= op["start"]:
+            continue
+
+        day = op["day"]
+        events_by_day.setdefault(day, []).append(
+            (op["start"], op["operators"])
+        )
+        events_by_day.setdefault(day, []).append(
+            (op["end"], -op["operators"])
+        )
+
+    intervals = []
+    peak_operators = 0
+    operator_usage_minutes = 0
+    total_operator_excess_minutes = 0
+    operator_violations = 0
+
+    for day, events in events_by_day.items():
+        events.sort(key=lambda event: (event[0], event[1]))
+        current_operators = 0
+        previous_time = None
+        available_operators = get_standard_operators_for_day(instance, day)
+        shift_start = get_shift_start_for_day(instance, day)
+        shift_end = get_shift_end_for_day(instance, day)
+
+        for time_value, delta in events:
+            if previous_time is not None and time_value > previous_time:
+                interval_start = previous_time
+                interval_end = time_value
+
+                if shift_end is not None:
+                    interval_start = max(interval_start, shift_start)
+                    interval_end = min(interval_end, shift_end)
+
+                duration = max(0, interval_end - interval_start)
+
+                if duration > 0:
+                    peak_operators = max(peak_operators, current_operators)
+                    operator_usage_minutes += (
+                        min(current_operators, available_operators)
+                        * duration
+                    )
+                    excess = max(
+                        0,
+                        current_operators - available_operators,
+                    )
+
+                    if excess > 0:
+                        operator_violations += 1
+                        total_operator_excess_minutes += excess * duration
+
+                    intervals.append({
+                        "day": day,
+                        "start": interval_start,
+                        "end": interval_end,
+                        "operators": current_operators,
+                        "excess": excess,
+                    })
+
+            current_operators += delta
+            previous_time = time_value
+
+    return {
+        "intervals": intervals,
+        "operator_usage_minutes": operator_usage_minutes,
+        "total_operator_excess_minutes": total_operator_excess_minutes,
+        "operator_violations": operator_violations,
+        "peak_operators": peak_operators,
+    }
+
 # ============================================================
 # SOLUTION EVALUATION
 # ============================================================
@@ -586,7 +726,6 @@ def evaluate_solution(solution, instance):
     capacity_excess_by_day_line = {}
    
 
-    total_penalty = 0
     infeasible_solution = False
 
     invalid_assignments = 0
@@ -598,7 +737,6 @@ def evaluate_solution(solution, instance):
     total_operator_excess = 0
     postponed_orders = 0
     postponed_boxes = 0
-    postponement_penalty = 0
     postponed_by_due_date = {}
     scheduled_kg = 0
     postponed_kg = 0
@@ -632,11 +770,6 @@ def evaluate_solution(solution, instance):
             postponed_boxes += item["master_boxes"]
             postponed_kg += get_order_kg(item, ref)
             postponed_economic_value += get_order_economic_value(item, ref)
-            penalty = get_postponement_penalty(
-                item["master_boxes"]
-            )
-            total_penalty += penalty
-            postponement_penalty += penalty
             postponed_orders += 1
             postponed_by_due_date[delivery_date] = (
                 postponed_by_due_date.get(delivery_date, 0) + 1
@@ -706,7 +839,6 @@ def evaluate_solution(solution, instance):
         if delivery_date is not None and day > delivery_date:
             delay = day - delivery_date
             delay_days_total += delay
-            total_penalty += delay * DELAY_PENALTY
 
     for key in production_time_by_day_line:
         total_time = (
@@ -740,8 +872,6 @@ def evaluate_solution(solution, instance):
             operator_violations += 1
             total_operator_excess += excess
 
-    setup_penalty = total_setup_time * SETUP_PENALTY
-    total_penalty += setup_penalty
     time_operations = simulate_time_schedule(solution, instance)
 
     operators_required_by_time, operator_excess_by_time = (
@@ -750,21 +880,17 @@ def evaluate_solution(solution, instance):
             instance
         )
     )
+    exact_operator_usage = calculate_operator_usage_exact(
+        time_operations,
+        instance,
+    )
 
-    total_operator_excess_by_time = sum(
-        operator_excess_by_time.values()
+    total_operator_excess_by_time = (
+        exact_operator_usage["total_operator_excess_minutes"]
     )
-    operator_violations = sum(
-        1
-        for excess in operator_excess_by_time.values()
-        if excess > 0
-    )
+    operator_violations = exact_operator_usage["operator_violations"]
     total_operator_excess = total_operator_excess_by_time
-
-    peak_operators = max(
-        operators_required_by_time.values(),
-        default=0
-    )
+    peak_operators = exact_operator_usage["peak_operators"]
 
     if total_operator_excess_by_time > 0:
         infeasible_solution = True
@@ -772,40 +898,9 @@ def evaluate_solution(solution, instance):
     if capacity_violations > 0:
         infeasible_solution = True
 
-    operator_usage_bucket_total = 0
-
-    for (day, bucket), used_operators in operators_required_by_time.items():
-        bucket_start = bucket * TIME_BUCKET_MIN
-        shift_start = get_shift_start_for_day(instance, day)
-        shift_end = get_shift_end_for_day(instance, day)
-
-        if shift_end is not None and not (shift_start <= bucket_start < shift_end):
-            continue
-
-        available_operators = get_standard_operators_for_day(instance, day)
-        operator_usage_bucket_total += min(
-            used_operators,
-            available_operators,
-        )
-
-    operator_usage_minutes = (
-        operator_usage_bucket_total * TIME_BUCKET_MIN
-    )
-    operator_utilization_reward = (
-        operator_usage_minutes * OPERATOR_UTILIZATION_REWARD
-    )
-    total_penalty -= operator_utilization_reward
-
-
-    economic_value_reward = scheduled_economic_value * ECONOMIC_VALUE_REWARD
-    total_penalty -= economic_value_reward
-    delay_penalty = delay_days_total * DELAY_PENALTY
-
-    if infeasible_solution:
-        total_penalty = float("inf")
+    operator_usage_minutes = exact_operator_usage["operator_usage_minutes"]
 
     metrics = {
-        "total_penalty": total_penalty,
         "invalid_assignments": invalid_assignments,
         "infeasible_solution": infeasible_solution,
         "capacity_violations": capacity_violations,
@@ -816,10 +911,7 @@ def evaluate_solution(solution, instance):
         "total_operator_excess": total_operator_excess,
         "postponed_orders": postponed_orders,
         "postponed_boxes": postponed_boxes,
-        "postponement_penalty": postponement_penalty,
         "postponed_by_due_date": postponed_by_due_date,
-        "delay_penalty": delay_penalty,
-        "setup_penalty": setup_penalty,
         "total_operator_excess_by_time": total_operator_excess_by_time,
         "total_hourly_operator_excess": total_operator_excess_by_time,
         "production_time_by_day_line": production_time_by_day_line,
@@ -836,14 +928,13 @@ def evaluate_solution(solution, instance):
         "time_operations": time_operations,
         "operators_required_by_time": operators_required_by_time,
         "operator_excess_by_time": operator_excess_by_time,
+        "operator_usage_intervals": exact_operator_usage["intervals"],
         "peak_operators": peak_operators,
         "operator_usage_minutes": operator_usage_minutes,
-        "operator_utilization_reward": operator_utilization_reward,
         "scheduled_kg": scheduled_kg,
         "postponed_kg": postponed_kg,
         "scheduled_economic_value": scheduled_economic_value,
         "postponed_economic_value": postponed_economic_value,
-        "economic_value_reward": economic_value_reward,
         "monday_violations": monday_violations,
     }
 
@@ -873,8 +964,7 @@ def print_metrics(metrics):
     if "normalised_fitness" in metrics:
         print(f"Normalised fitness: {metrics['normalised_fitness']:.6f}")
     else:
-        print(f"Total penalty: {metrics['total_penalty']:.2f}")
-    print(f"Total economic reward: {metrics.get('economic_value_reward', 0):.2f}")
+        print("Normalised fitness: not calculated")
     print(f"Scheduled economic value: {metrics.get('scheduled_economic_value', 0):.2f}")
     print(f"Postponed economic value: {metrics.get('postponed_economic_value', 0):.2f}")
     print(f"Total capacity excess: {metrics['total_capacity_excess']:.2f} min")
@@ -887,9 +977,7 @@ def print_metrics(metrics):
     print(f"Total operator excess: {metrics['total_operator_excess']:.2f}")
     print(f"Peak operators by time: {metrics['peak_operators']}")
     print(f"Total hourly operator excess: {metrics['total_operator_excess_by_time']:.2f}")
-    print(f"Postponement penalty: {metrics['postponement_penalty']:.2f}")
     print(f"Operator usage: {metrics['operator_usage_minutes']:.2f} operator-min")
-    print(f"Operator utilization reward: {metrics['operator_utilization_reward']:.2f}")
     print("\nProduction time by day/line:")
 
     for key, value in metrics["production_time_by_day_line"].items():

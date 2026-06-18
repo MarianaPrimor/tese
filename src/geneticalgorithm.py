@@ -16,12 +16,9 @@ from evaluator import (
     get_available_line_time_for_day,
     get_order_economic_value,
     simulate_time_schedule,
-    calculate_operator_usage_by_time,
+    calculate_operator_usage_exact,
     get_capacity_tolerance_for_day,
-    DELAY_PENALTY,
-    POSTPONEMENT_PENALTY,
-    ECONOMIC_VALUE_REWARD,
-    TIME_BUCKET_MIN,
+    DEFAULT_NORMALISED_WEIGHTS,
     compute_max_values,
     normalised_fitness,
     normalised_fitness_breakdown,
@@ -31,13 +28,22 @@ from evaluator import (
 # GENERATING INITIAL POPULATION
 
 
-def generate_initial_population(instance, population_size=200, seed=0):
+def generate_initial_population(
+    instance,
+    population_size=200,
+    seed=0,
+    objective_weights=None,
+):
     population = []
 
     for i in range(population_size):
         solution_seed = seed * 100000 + i
         solution = generate_random_solution(instance, seed=solution_seed)
-        solution = enforce_hard_constraints(solution, instance)
+        solution = enforce_hard_constraints(
+            solution,
+            instance,
+            objective_weights=objective_weights,
+        )
         population.append(solution)
 
     return population
@@ -47,21 +53,31 @@ def generate_initial_population(instance, population_size=200, seed=0):
 # FITNESS
 
 
-def fitness(solution, instance, max_values):
+def fitness(solution, instance, max_values, objective_weights=None):
     metrics = evaluate_solution(solution, instance)
-    return normalised_fitness(metrics, max_values)
+    return normalised_fitness(
+        metrics,
+        max_values,
+        weights=objective_weights,
+    )
 
 
-def evaluate_with_normalised_fitness(solution, instance, max_values):
+def evaluate_with_normalised_fitness(
+    solution,
+    instance,
+    max_values,
+    objective_weights=None,
+):
     metrics = evaluate_solution(solution, instance)
-    raw_total_penalty = metrics["total_penalty"]
-    breakdown = normalised_fitness_breakdown(metrics, max_values)
+    breakdown = normalised_fitness_breakdown(
+        metrics,
+        max_values,
+        weights=objective_weights,
+    )
     score = breakdown["total"]
 
-    metrics["raw_total_penalty"] = raw_total_penalty
     metrics["normalised_fitness"] = score
     metrics["normalised_fitness_breakdown"] = breakdown
-    metrics["total_penalty"] = score
     metrics["max_values"] = max_values
     return metrics
 
@@ -81,9 +97,20 @@ def choose_feasible_day(gene, valid_days):
     return min(valid_days)
 
 
-def enforce_hard_constraints(solution, instance):
+def enforce_hard_constraints(
+    solution,
+    instance,
+    objective_weights=None,
+    reinsert_postponed=False,
+):
     refs_by_id = create_refs_by_id(instance)
     repaired_solution = deepcopy(solution)
+    max_values = compute_max_values(instance)
+    weights = (
+        DEFAULT_NORMALISED_WEIGHTS
+        if objective_weights is None
+        else objective_weights
+    )
 
     for gene in repaired_solution:
         ref_id = str(gene.get("ref_id")).strip()
@@ -115,11 +142,23 @@ def enforce_hard_constraints(solution, instance):
     repaired_solution = repair_capacity_constraints(
         repaired_solution,
         instance,
+        max_values,
+        weights,
     )
     repaired_solution = repair_operator_constraints(
         repaired_solution,
         instance,
+        max_values,
+        weights,
     )
+
+    if reinsert_postponed:
+        repaired_solution = reinsert_postponed_orders(
+            repaired_solution,
+            instance,
+            max_values,
+            weights,
+        )
 
     return repaired_solution
 
@@ -133,12 +172,18 @@ def tournament_selection(
     instance,
     max_values,
     tournament_size=3,
+    objective_weights=None,
 ):
     candidates = random.sample(population, tournament_size)
 
     best_candidate = min(
         candidates,
-        key=lambda solution: fitness(solution, instance, max_values)
+        key=lambda solution: fitness(
+            solution,
+            instance,
+            max_values,
+            objective_weights=objective_weights,
+        )
     )
 
     return deepcopy(best_candidate)
@@ -253,24 +298,36 @@ def postpone_gene(gene):
     gene["postponed"] = True
 
 
-def get_postponement_objective_cost(gene, ref):
+def schedule_gene(gene, day, line):
+    gene["day"] = day
+    gene["line"] = line
+    gene["postponed"] = False
+
+
+def get_postponement_objective_cost(gene, ref, max_values, weights):
     economic_value = get_order_economic_value(gene, ref)
     day = gene.get("day")
     due_day = gene.get("delivery_date")
-    avoided_delay_cost = 0
+    avoided_delay_ratio = 0
 
     if day is not None and due_day is not None and day > due_day:
-        avoided_delay_cost = (day - due_day) * DELAY_PENALTY
+        avoided_delay_ratio = (day - due_day) / max_values["delay_days"]
+
+    postponed_ratio = (
+        gene.get("master_boxes", 0)
+        / max_values["postponed_volume"]
+    )
+    economic_ratio = economic_value / max_values["economic_value"]
 
     return max(
-        1,
-        gene.get("master_boxes", 0) * POSTPONEMENT_PENALTY
-        + economic_value * ECONOMIC_VALUE_REWARD
-        - avoided_delay_cost,
+        1e-9,
+        weights["postponement"] * postponed_ratio
+        + weights["economic_value"] * economic_ratio
+        - weights["delay"] * avoided_delay_ratio,
     )
 
 
-def repair_capacity_constraints(solution, instance):
+def repair_capacity_constraints(solution, instance, max_values, weights):
     refs_by_id = create_refs_by_id(instance)
     repaired_solution = deepcopy(solution)
     groups = {}
@@ -323,6 +380,8 @@ def repair_capacity_constraints(solution, instance):
                 postponement_cost = get_postponement_objective_cost(
                     gene,
                     ref,
+                    max_values,
+                    weights,
                 )
                 candidates.append((
                     postponement_cost / freed_time,
@@ -336,24 +395,24 @@ def repair_capacity_constraints(solution, instance):
     return repaired_solution
 
 
-def repair_operator_constraints(solution, instance):
+def repair_operator_constraints(solution, instance, max_values, weights):
     refs_by_id = create_refs_by_id(instance)
     repaired_solution = deepcopy(solution)
     max_iterations = len(repaired_solution)
 
     for _ in range(max_iterations):
         operations = simulate_time_schedule(repaired_solution, instance)
-        _, excess_by_time = calculate_operator_usage_by_time(
+        exact_operator_usage = calculate_operator_usage_exact(
             operations,
             instance,
         )
-        violating_slots = {
-            key: excess
-            for key, excess in excess_by_time.items()
-            if excess > 0
-        }
+        violating_intervals = [
+            interval
+            for interval in exact_operator_usage["intervals"]
+            if interval["excess"] > 0
+        ]
 
-        if not violating_slots:
+        if not violating_intervals:
             break
 
         relief_by_order = {}
@@ -364,21 +423,25 @@ def repair_operator_constraints(solution, instance):
             if order_id is None or operation["end"] <= operation["start"]:
                 continue
 
-            start_bucket = int(operation["start"] // TIME_BUCKET_MIN)
-            end_bucket = int((operation["end"] - 1) // TIME_BUCKET_MIN)
+            for interval in violating_intervals:
+                if operation["day"] != interval["day"]:
+                    continue
 
-            for bucket in range(start_bucket, end_bucket + 1):
-                key = (operation["day"], bucket)
+                overlap = (
+                    min(operation["end"], interval["end"])
+                    - max(operation["start"], interval["start"])
+                )
 
-                if key not in violating_slots:
+                if overlap <= 0:
                     continue
 
                 relief_by_order[order_id] = (
                     relief_by_order.get(order_id, 0)
                     + min(
                         operation.get("operators", 0),
-                        violating_slots[key],
+                        interval["excess"],
                     )
+                    * overlap
                 )
 
         candidates = []
@@ -395,7 +458,12 @@ def repair_operator_constraints(solution, instance):
             if ref is None:
                 cost = 0
             else:
-                cost = get_postponement_objective_cost(gene, ref)
+                cost = get_postponement_objective_cost(
+                    gene,
+                    ref,
+                    max_values,
+                    weights,
+                )
 
             candidates.append((cost / relief, order_id, gene))
 
@@ -407,6 +475,74 @@ def repair_operator_constraints(solution, instance):
             key=lambda candidate: (candidate[0], candidate[1]),
         )
         postpone_gene(selected_gene)
+
+    return repaired_solution
+
+
+def reinsert_postponed_orders(solution, instance, max_values, weights):
+    refs_by_id = create_refs_by_id(instance)
+    repaired_solution = deepcopy(solution)
+
+    improved = True
+
+    while improved:
+        improved = False
+        current_metrics = evaluate_solution(repaired_solution, instance)
+        current_score = normalised_fitness(
+            current_metrics,
+            max_values,
+            weights=weights,
+        )
+        best_candidate = None
+        best_score = current_score
+
+        postponed_genes = sorted(
+            (
+                gene for gene in repaired_solution
+                if gene.get("postponed")
+            ),
+            key=lambda gene: (
+                gene.get("delivery_date") or instance["n_days"] + 1,
+                gene.get("order_id"),
+            ),
+        )
+
+        for gene in postponed_genes:
+            ref = refs_by_id.get(str(gene.get("ref_id")).strip())
+
+            if ref is None:
+                continue
+
+            for day in get_valid_days_for_ref(instance, ref):
+                for line in valid_lines_for_ref(ref):
+                    candidate = deepcopy(repaired_solution)
+                    candidate_gene = next(
+                        item for item in candidate
+                        if item.get("order_id") == gene.get("order_id")
+                    )
+                    schedule_gene(candidate_gene, day, line)
+
+                    candidate_metrics = evaluate_solution(
+                        candidate,
+                        instance,
+                    )
+
+                    if candidate_metrics.get("infeasible_solution"):
+                        continue
+
+                    candidate_score = normalised_fitness(
+                        candidate_metrics,
+                        max_values,
+                        weights=weights,
+                    )
+
+                    if candidate_score < best_score:
+                        best_score = candidate_score
+                        best_candidate = candidate
+
+        if best_candidate is not None:
+            repaired_solution = best_candidate
+            improved = True
 
     return repaired_solution
 
@@ -424,6 +560,7 @@ def run_genetic_algorithm(
     stagnation_k=20,
     seed=0,
     verbose= True,
+    objective_weights=None,
 ):
     start_time = time.perf_counter()
     random.seed(seed)
@@ -438,7 +575,8 @@ def run_genetic_algorithm(
     population = generate_initial_population(
         instance,
         population_size,
-        seed=seed
+        seed=seed,
+        objective_weights=objective_weights,
     )
 
     if verbose:
@@ -447,13 +585,19 @@ def run_genetic_algorithm(
     random.seed(seed)
     population = sorted(
         population,
-        key=lambda solution: fitness(solution, instance, max_values)
+        key=lambda solution: fitness(
+            solution,
+            instance,
+            max_values,
+            objective_weights=objective_weights,
+        )
     )
     initial_best_solution = deepcopy(population[0])
     initial_best_metrics = evaluate_with_normalised_fitness(
         initial_best_solution,
         instance,
         max_values,
+        objective_weights=objective_weights,
     )
 
     best_solution = deepcopy(initial_best_solution)
@@ -465,7 +609,12 @@ def run_genetic_algorithm(
         actual_generations = generation
         population = sorted(
             population,
-            key=lambda solution: fitness(solution, instance, max_values)
+            key=lambda solution: fitness(
+                solution,
+                instance,
+                max_values,
+                objective_weights=objective_weights,
+            )
         )
 
         current_best = population[0]
@@ -473,8 +622,9 @@ def run_genetic_algorithm(
             current_best,
             instance,
             max_values,
+            objective_weights=objective_weights,
         )
-        if current_metrics["total_penalty"] < best_metrics["total_penalty"]:
+        if current_metrics["normalised_fitness"] < best_metrics["normalised_fitness"]:
             best_solution = deepcopy(current_best)
             best_metrics = current_metrics
             generations_without_improvement = 0  # reset
@@ -492,7 +642,7 @@ def run_genetic_algorithm(
 
         if (
             best_metrics is None
-            or current_metrics["total_penalty"] < best_metrics["total_penalty"]
+            or current_metrics["normalised_fitness"] < best_metrics["normalised_fitness"]
         ):
             best_solution = deepcopy(current_best)
             best_metrics = current_metrics
@@ -500,14 +650,18 @@ def run_genetic_algorithm(
         if verbose:
             print(
                 f"Generation {generation:03d} | "
-                f"best fitness: {best_metrics['total_penalty']:.6f} | "
-                f"current best: {current_metrics['total_penalty']:.6f}",
+                f"best fitness: {best_metrics['normalised_fitness']:.6f} | "
+                f"current best: {current_metrics['normalised_fitness']:.6f}",
                 flush=True,
             )
 
 
         new_population = [
-            enforce_hard_constraints(solution, instance)
+            enforce_hard_constraints(
+                solution,
+                instance,
+                objective_weights=objective_weights,
+            )
             for solution in population[:elite_size]
         ]
 
@@ -516,14 +670,16 @@ def run_genetic_algorithm(
                 population,
                 instance,
                 max_values,
-                tournament_size=tournament_size
+                tournament_size=tournament_size,
+                objective_weights=objective_weights,
             )
 
             parent_2 = tournament_selection(
                 population,
                 instance,
                 max_values,
-                tournament_size=tournament_size
+                tournament_size=tournament_size,
+                objective_weights=objective_weights,
             )
 
             child = crossover(parent_1, parent_2)
@@ -533,34 +689,44 @@ def run_genetic_algorithm(
                 mutation_rate=mutation_rate,
             )
 
-            child = enforce_hard_constraints(child, instance)
+            child = enforce_hard_constraints(
+                child,
+                instance,
+                objective_weights=objective_weights,
+            )
 
             new_population.append(child)
 
         population = new_population
 
-    best_solution = enforce_hard_constraints(best_solution, instance)
+    best_solution = enforce_hard_constraints(
+        best_solution,
+        instance,
+        objective_weights=objective_weights,
+        reinsert_postponed=True,
+    )
     best_metrics = evaluate_with_normalised_fitness(
         best_solution,
         instance,
         max_values,
+        objective_weights=objective_weights,
     )
     best_metrics["computation_time_sec"] = time.perf_counter() - start_time
 
-    initial_penalty = initial_best_metrics["total_penalty"]
-    final_penalty = best_metrics["total_penalty"]
+    initial_fitness = initial_best_metrics["normalised_fitness"]
+    final_fitness = best_metrics["normalised_fitness"]
 
-    if initial_penalty != 0:
+    if initial_fitness != 0:
         improvement = (
-            (initial_penalty - final_penalty)
-            / abs(initial_penalty)
+            (initial_fitness - final_fitness)
+            / abs(initial_fitness)
         ) * 100
     else: 
         improvement = 0.0
 
     print("\n=== GENETIC ALGORITHM SUMMARY ===")
-    print(f"Initial best fitness: {initial_penalty:.6f}")
-    print(f"Final best fitness: {final_penalty:.6f}")
+    print(f"Initial best fitness: {initial_fitness:.6f}")
+    print(f"Final best fitness: {final_fitness:.6f}")
     print(f"Improvement: {improvement:.2f}%")
     print(f"Initial delay: {initial_best_metrics['delay_days_total']} days")
     print(f"Final delay: {best_metrics['delay_days_total']} days")
@@ -577,6 +743,10 @@ def run_genetic_algorithm(
     print(f"Setup contribution: {breakdown['setup']:+.6f}")
     print(f"Economic value contribution: {breakdown['economic_value']:+.6f}")
     print(
+        "Capacity utilisation contribution: "
+        f"{breakdown.get('capacity_utilisation', 0):+.6f}"
+    )
+    print(
         "Operator utilisation contribution: "
         f"{breakdown['operator_utilisation']:+.6f}"
     )
@@ -585,6 +755,7 @@ def run_genetic_algorithm(
     print(f"Maximum delay days: {max_values['delay_days']:.2f}")
     print(f"Maximum setup time: {max_values['setup_time']:.2f}")
     print(f"Maximum economic value: {max_values['economic_value']:.2f}")
+    print(f"Maximum capacity time: {max_values['capacity_time']:.2f}")
     print(f"Maximum operator minutes: {max_values['operator_minutes']:.2f}")
 
     return best_solution, best_metrics,actual_generations

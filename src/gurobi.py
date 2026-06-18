@@ -361,9 +361,9 @@ def _solve_simplified_with_gurobi_legacy(instance):
         gurobi_solution = []
         print("\n=== OBJECTIVE BREAKDOWN ===")
         print(f"Total objective: {model.ObjVal:.2f}")
-        print(f"Delay penalty: {delay_component:.2f}")
-        print(f"Capacity penalty: {capacity_component:.2f}")
-        print(f"Operator penalty: {operator_component:.2f}")
+        print(f"Delay component: {delay_component:.2f}")
+        print(f"Capacity component: {capacity_component:.2f}")
+        print(f"Operator component: {operator_component:.2f}")
 
 
 
@@ -662,7 +662,7 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
             )
 
     postponed_volume_expr = gp.LinExpr()
-    economic_reward_expr = gp.LinExpr()
+    scheduled_economic_value_expr = gp.LinExpr()
     operator_usage_expr = gp.LinExpr()
 
     for o in orders:
@@ -681,7 +681,7 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
             for p in positions
         )
         postponed_volume_expr += master_boxes * postponed[o]
-        economic_reward_expr += economic_value * scheduled_expr
+        scheduled_economic_value_expr += economic_value * scheduled_expr
 
         for l in lines:
             production_time = evaluator_get_production_time(
@@ -754,7 +754,7 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
         * setup_expr
         / max_values["setup_time"]
         - ECONOMIC_VALUE_NORMALIZED_WEIGHT
-        * economic_reward_expr
+        * scheduled_economic_value_expr
         / max_values["economic_value"]
         - OPERATOR_UTILIZATION_NORMALIZED_WEIGHT
         * operator_usage_expr
@@ -829,12 +829,9 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
                 "the hourly operator constraint."
             )
 
-    raw_total_penalty = metrics["total_penalty"]
     breakdown = normalised_fitness_breakdown(metrics, max_values)
-    metrics["raw_total_penalty"] = raw_total_penalty
     metrics["normalised_fitness"] = normalised_fitness(metrics, max_values)
     metrics["normalised_fitness_breakdown"] = breakdown
-    metrics["total_penalty"] = metrics["normalised_fitness"]
     metrics["max_values"] = max_values
     metrics["gurobi_objective"] = model.ObjVal
     metrics["objective_evaluator_difference"] = (
@@ -922,8 +919,7 @@ if __name__ == "__main__":
 
     print("\n=== GUROBI METRICS FOR COMPARISON ===")
     print(f"Computation time: {metrics['computation_time_sec']:.2f} sec")
-    print(f"Normalised fitness: {metrics['total_penalty']:.6f}")
-    print(f"Total economic reward: {metrics['economic_value_reward']:.2f}")
+    print(f"Normalised fitness: {metrics['normalised_fitness']:.6f}")
     print(f"Scheduled economic value: {metrics['scheduled_economic_value']:.2f}")
     print(f"Postponed economic value: {metrics['postponed_economic_value']:.2f}")
     print(f"Total capacity excess: {metrics['total_capacity_excess']:.2f} min")

@@ -187,7 +187,7 @@ def run_batch(
                     **params,
                 )
                 elapsed = time.perf_counter() - start_time
-                fitness = metrics["total_penalty"]
+                fitness = metrics["normalised_fitness"]
                 completed_row = create_checkpoint_row(
                     experiment,
                     param_name,

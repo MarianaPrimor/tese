@@ -220,6 +220,7 @@ def _read_references_sheet(ws):
             "ops_L2_prod": ["operadores_nec_l2_prod", "operadores nec l2 prod"],
             "kg_per_master_box": ["kg", "kg por caixa", "kg per master box"],
             "economic_value_per_master_box": ["euros", "valor economico", "economic value", "economic value per master box"],
+            "abc_class": ["abc", "classe abc", "abc class", "classificacao abc"],
             "needs_oven": ["precisa_forno", "precisa forno", "requires oven"],
             "monday_forbidden": [
                 "nao_produzir_segunda",
@@ -246,6 +247,7 @@ def _read_references_sheet(ws):
         family = _safe_text(_get_row_value(row, indexes, "family"), default="no_family").lower()
         kg_per_master_box = _safe_float(_get_row_value(row, indexes, "kg_per_master_box"), default=0)
         economic_value_per_master_box = _safe_float(_get_row_value(row, indexes, "economic_value_per_master_box"), default=0)
+        abc_class = _safe_text(_get_row_value(row, indexes, "abc_class"), default="C").upper()
         needs_oven = _is_yes(_get_row_value(row, indexes, "needs_oven"))
         monday_forbidden = _safe_int(
             _get_row_value(row, indexes, "monday_forbidden"),
@@ -305,6 +307,7 @@ def _read_references_sheet(ws):
             "cakes_per_box": cakes_per_box,
             "kg_per_master_box": kg_per_master_box,
             "economic_value_per_master_box": economic_value_per_master_box,
+            "abc_class": abc_class,
             "needs_oven": needs_oven,
             "monday_forbidden": monday_forbidden,
             "fixed_line": fixed_line,
@@ -638,6 +641,7 @@ def _find_header_indexes(ws):
         ],
         "delivery_date": ["data entrega", "delivery date", "due date"],
         "priority": ["prioridade", "priority"],
+        "abc_class": ["abc", "classe abc", "abc class", "classificacao abc"],
     }
 
     for row_number, row in enumerate(
@@ -722,6 +726,10 @@ def _read_demand_sheet(ws, working_days=None):
             "priority": _safe_text(
                 _get_row_value(row, indexes, "priority"),
                 default="Medium"
+            ),
+            "abc_class": _safe_text(
+                _get_row_value(row, indexes, "abc_class"),
+                default="C"
             ),
         }
 
@@ -1001,7 +1009,7 @@ def _split_large_orders(demand, refs, final_lines, available_line_time_min):
     return split_demand
 
 def load_real_instance(
-    excel_path="Inputs_EmpresaXReal.xlsx",
+    excel_path="Inputs_EmpresaX.xlsx",
     n_synthetic_orders=15,
     seed=42
 ):
@@ -1300,6 +1308,6 @@ def print_instance_summary(instance):
 
 
 if __name__ == "__main__":
-    instance = load_real_instance(excel_path="../Inputs_EmpresaX.xlsx")
+    instance = load_real_instance(excel_path="../Inputs_EmpresaXReal.xlsx")
     print_instance_summary(instance)
 
