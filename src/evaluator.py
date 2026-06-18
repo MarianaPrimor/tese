@@ -978,6 +978,44 @@ def print_metrics(metrics):
     print(f"Peak operators by time: {metrics['peak_operators']}")
     print(f"Total hourly operator excess: {metrics['total_operator_excess_by_time']:.2f}")
     print(f"Operator usage: {metrics['operator_usage_minutes']:.2f} operator-min")
+
+    intervals = metrics.get("operator_usage_intervals", [])
+
+    if intervals:
+        print("\nOperator usage by exact time interval:")
+        print("  Day | Time        | Used | Available | Excess | Status")
+
+        for interval in sorted(
+            intervals,
+            key=lambda item: (
+                item.get("day", 0),
+                item.get("start", 0),
+                item.get("end", 0),
+            )
+        ):
+            used = interval.get("operators", 0)
+
+            if used <= 0:
+                continue
+
+            day = interval.get("day")
+            available = metrics.get("standard_operators_by_day", {}).get(
+                day,
+                metrics["standard_operators"],
+            )
+            excess = max(0, used - available)
+            status = "OVER" if excess > 0 else "OK"
+
+            print(
+                f"  {day:>3} | "
+                f"{_format_minutes(interval.get('start', 0))}-"
+                f"{_format_minutes(interval.get('end', 0))} | "
+                f"{used:>4} | "
+                f"{available:>9} | "
+                f"{excess:>6} | "
+                f"{status}"
+            )
+
     print("\nProduction time by day/line:")
 
     for key, value in metrics["production_time_by_day_line"].items():
