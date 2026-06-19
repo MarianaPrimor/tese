@@ -230,6 +230,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Reorganize downloaded artifacts
+        run: |
+          mkdir -p src/outputs/scenario_analysis/results
+          for i in 0 1 2 3 4; do
+            cp src/outputs/scenario_analysis/axis3-weight-$i/axis_3_weight_$i.csv \
+               src/outputs/scenario_analysis/results/
+          done
+
       - name: Merge axis3 weight CSVs and generate plots
         run: python src/scenario_analysis.py --axis 3 --merge-weights --plots-only
 
