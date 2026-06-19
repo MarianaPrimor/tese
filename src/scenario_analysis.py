@@ -450,6 +450,171 @@ def plot_axis_1_abc_stacked(df):
     return path
 
 
+def plot_axis_1_euros_per_kg(df):
+    required = ["euros_produced", "kilos"]
+    missing = [column for column in required if column not in df.columns]
+
+    if missing:
+        print(
+            "Skipping Axis 1 euros/kg chart because columns are missing: "
+            f"{', '.join(missing)}."
+        )
+        return None
+
+    path = PLOTS_DIR / "axis_1_euros_per_kg.png"
+    temp = df.copy()
+    temp["euros_per_kg"] = temp.apply(
+        lambda row: (
+            row["euros_produced"] / row["kilos"]
+            if row["kilos"] and row["kilos"] > 0
+            else 0
+        ),
+        axis=1,
+    )
+    summary = aggregate_by(temp, "demand_factor", ["euros_per_kg"])
+    x = summary["demand_factor"]
+    mean = summary["euros_per_kg_mean"]
+    std = summary["euros_per_kg_std"].fillna(0)
+
+    plt.figure(figsize=(9, 5))
+    plt.plot(x, mean, marker="o", color="#123C7C", linewidth=2)
+    plt.fill_between(
+        x,
+        mean - std,
+        mean + std,
+        color="#123C7C",
+        alpha=0.18,
+        linewidth=0,
+    )
+    plt.title("Demand scaling - Economic value per kg produced")
+    plt.xlabel("Demand factor")
+    plt.ylabel("Economic value per kg")
+    plt.grid(True, alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(path, dpi=300)
+    plt.close()
+    return path
+
+
+def plot_axis_1_postponed_by_abc_lines(df):
+    columns = ["postponed_A", "postponed_B", "postponed_C"]
+    missing = [column for column in columns if column not in df.columns]
+
+    if missing:
+        print(
+            "Skipping Axis 1 ABC line chart because columns are missing: "
+            f"{', '.join(missing)}. Rerun Axis 1 to generate them."
+        )
+        return None
+
+    path = PLOTS_DIR / "axis_1_postponed_by_abc_lines.png"
+    colours = {
+        "postponed_A": "#B00032",
+        "postponed_B": "#123C7C",
+        "postponed_C": "#8AA6C8",
+    }
+    labels = {
+        "postponed_A": "A",
+        "postponed_B": "B",
+        "postponed_C": "C",
+    }
+
+    plt.figure(figsize=(9, 5))
+
+    for column in columns:
+        summary = aggregate_by(df, "demand_factor", [column])
+        x = summary["demand_factor"]
+        mean = summary[f"{column}_mean"]
+        std = summary[f"{column}_std"].fillna(0)
+
+        plt.plot(
+            x,
+            mean,
+            marker="o",
+            color=colours[column],
+            linewidth=2,
+            label=labels[column],
+        )
+        plt.fill_between(
+            x,
+            mean - std,
+            mean + std,
+            color=colours[column],
+            alpha=0.14,
+            linewidth=0,
+        )
+
+    plt.title("Demand scaling - Postponed orders by ABC category")
+    plt.xlabel("Demand factor")
+    plt.ylabel("Mean postponed orders")
+    plt.legend(title="ABC category")
+    plt.grid(True, alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(path, dpi=300)
+    plt.close()
+    return path
+
+
+def plot_axis_1_setup_time_paradox(df):
+    if "total_setup_time" not in df.columns:
+        print(
+            "Skipping Axis 1 setup time paradox chart because "
+            "total_setup_time is missing."
+        )
+        return None
+
+    path = PLOTS_DIR / "axis_1_setup_time_paradox.png"
+    summary = aggregate_by(df, "demand_factor", ["total_setup_time"])
+    x = summary["demand_factor"]
+    mean = summary["total_setup_time_mean"]
+    std = summary["total_setup_time_std"].fillna(0)
+
+    plt.figure(figsize=(9, 5))
+    plt.plot(x, mean, marker="o", color="#725AC1", linewidth=2)
+    plt.fill_between(
+        x,
+        mean - std,
+        mean + std,
+        color="#725AC1",
+        alpha=0.18,
+        linewidth=0,
+    )
+
+    if len(x) > 1:
+        annotation_x = x.iloc[max(0, len(x) // 2)]
+        annotation_y = mean.iloc[max(0, len(mean) // 2)]
+        plt.annotate(
+            "Setup time decreases as demand increases - "
+            "denser schedules reduce product switching",
+            xy=(annotation_x, annotation_y),
+            xytext=(0.62, 0.82),
+            textcoords="axes fraction",
+            arrowprops={
+                "arrowstyle": "->",
+                "color": "#111111",
+                "linewidth": 1.2,
+            },
+            fontsize=9,
+            ha="left",
+            va="center",
+            bbox={
+                "boxstyle": "round,pad=0.35",
+                "facecolor": "white",
+                "edgecolor": "#C9D5E8",
+                "alpha": 0.95,
+            },
+        )
+
+    plt.title("Demand scaling - Setup time paradox")
+    plt.xlabel("Demand factor")
+    plt.ylabel("Setup time")
+    plt.grid(True, alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(path, dpi=300)
+    plt.close()
+    return path
+
+
 def plot_axis_2_marginal_returns(df):
     path = PLOTS_DIR / "axis_2_marginal_returns.png"
     summary = (
@@ -758,6 +923,14 @@ def plot_axis_1(csv_path):
     if abc_plot is not None:
         created.append(abc_plot)
 
+    for extra_plot in [
+        plot_axis_1_euros_per_kg(df),
+        plot_axis_1_postponed_by_abc_lines(df),
+        plot_axis_1_setup_time_paradox(df),
+    ]:
+        if extra_plot is not None:
+            created.append(extra_plot)
+
     return created
 
 
@@ -971,8 +1144,11 @@ def run_axis_2(excel_path, max_workers):
     return csv_created, plots_created
 
 
-def run_axis_3(excel_path, max_workers):
-    csv_path = RESULTS_DIR / "axis_3.csv"
+def run_axis_3(excel_path, max_workers, weight_index=None):
+    if weight_index is None:
+        csv_path = RESULTS_DIR / "axis_3.csv"
+    else:
+        csv_path = RESULTS_DIR / f"axis_3_weight_{weight_index}.csv"
 
     if csv_path.exists():
         print(f"Axis 3 GA skipped because {csv_path} already exists.")
@@ -983,30 +1159,62 @@ def run_axis_3(excel_path, max_workers):
     for seed in SEEDS:
         jobs.append((excel_path, "baseline", 0.0, seed))
 
-    for weight_name in DEFAULT_NORMALISED_WEIGHTS:
+    weight_names = list(DEFAULT_NORMALISED_WEIGHTS)
+
+    if weight_index is not None:
+        weight_names = [weight_names[weight_index]]
+
+    for weight_name in weight_names:
         for weight_value in WEIGHT_VALUES:
             for seed in SEEDS:
                 jobs.append((excel_path, weight_name, weight_value, seed))
 
     rows = execute_parallel(jobs, run_axis_3_case, max_workers=max_workers)
-    raw_csv = save_axis_csv(3, rows)
     df = pd.DataFrame(rows)
-    summary_csv = save_summary_csv(
-        3,
-        df,
-        ["weight_name", "weight_value"],
-        [
-            "postponed_orders",
-            "postponed_boxes",
-            "euros_produced",
-            "total_setup_time",
-            "operators_used",
-            "kilos",
-        ],
-    )
-    csv_created = [raw_csv, summary_csv]
+
+    if weight_index is None:
+        raw_csv = save_axis_csv(3, rows)
+    else:
+        raw_csv = csv_path
+        df.to_csv(raw_csv, index=False)
+
+    csv_created = [raw_csv]
+
+    if weight_index is None:
+        summary_csv = save_summary_csv(
+            3,
+            df,
+            ["weight_name", "weight_value"],
+            [
+                "postponed_orders",
+                "postponed_boxes",
+                "euros_produced",
+                "total_setup_time",
+                "operators_used",
+                "kilos",
+            ],
+        )
+        csv_created.append(summary_csv)
+
     plots_created = plot_axis_3(raw_csv)
     return csv_created, plots_created
+
+
+def merge_axis_3_weight_csvs():
+    frames = []
+
+    for weight_index in range(5):
+        path = RESULTS_DIR / f"axis_3_weight_{weight_index}.csv"
+
+        if not path.exists():
+            raise FileNotFoundError(f"Missing required file: {path}")
+
+        frames.append(pd.read_csv(path))
+
+    merged = pd.concat(frames, ignore_index=True)
+    output_path = RESULTS_DIR / "axis_3.csv"
+    merged.to_csv(output_path, index=False)
+    return output_path
 
 
 def regenerate_plots(axis, excel_path):
@@ -1059,6 +1267,18 @@ def parse_args():
         help="Regenerate plots from existing CSVs without rerunning the GA.",
     )
     parser.add_argument(
+        "--weight-index",
+        type=int,
+        default=None,
+        choices=[0, 1, 2, 3, 4],
+        help="Run only this weight index for axis 3. Saves to axis_3_weight_N.csv.",
+    )
+    parser.add_argument(
+        "--merge-weights",
+        action="store_true",
+        help="Merge axis_3_weight_0..4.csv into axis_3.csv before plotting.",
+    )
+    parser.add_argument(
         "--excel-path",
         default=str(DEFAULT_EXCEL_PATH),
         help="Path to the Excel input file.",
@@ -1082,6 +1302,9 @@ def main():
     created_plots = []
 
     if args.plots_only:
+        if args.axis == "3" and args.merge_weights:
+            merge_axis_3_weight_csvs()
+
         created_plots = regenerate_plots(args.axis, excel_path)
     else:
         axes_to_run = [args.axis] if args.axis else ["1", "2", "3"]
@@ -1092,7 +1315,11 @@ def main():
             elif axis == "2":
                 csvs, plots = run_axis_2(excel_path, args.max_workers)
             elif axis == "3":
-                csvs, plots = run_axis_3(excel_path, args.max_workers)
+                csvs, plots = run_axis_3(
+                    excel_path,
+                    args.max_workers,
+                    weight_index=args.weight_index,
+                )
             else:
                 csvs, plots = [], []
 
