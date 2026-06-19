@@ -13,7 +13,7 @@ jobs:
   # ── Axis 1: Demand scaling ──────────────────────────────────────────────────
   axis1-demand:
     name: "Axis 1 — Demand Scaling"
-    runs-on: self-hosted          # change to ubuntu-latest to use GitHub's servers
+    runs-on: ubuntu-latest          # change to ubuntu-latest to use GitHub's servers
     timeout-minutes: 180
 
     steps:
@@ -44,7 +44,7 @@ jobs:
   # ── Axis 2: Operator sweep ──────────────────────────────────────────────────
   axis2-operators:
     name: "Axis 2 — Operator Sweep"
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 180
 
     steps:
@@ -75,7 +75,7 @@ jobs:
   # ── Axis 3: Weight sensitivity (heaviest — runs last) ──────────────────────
   axis3-weights:
     name: "Axis 3 — Weight Sensitivity (OFAT)"
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
@@ -106,7 +106,7 @@ jobs:
   # ── Collect everything and commit back to repo ──────────────────────────────
   collect-results:
     name: "Collect & Commit Results"
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     needs: [axis1-demand, axis2-operators, axis3-weights]   # waits for all 3
 
     steps:
