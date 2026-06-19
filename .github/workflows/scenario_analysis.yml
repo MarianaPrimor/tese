@@ -30,7 +30,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 1
-        run: python scenario_analysis.py --axis 1
+        run: run: python src/scenario_analysis.py --axis 1
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -61,7 +61,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 2
-        run: python scenario_analysis.py --axis 2
+        run: python src/scenario_analysis.py --axis 2
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -92,7 +92,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 3
-        run: python scenario_analysis.py --axis 3
+        run: python src/scenario_analysis.py --axis 3
 
       - name: Upload results
         uses: actions/upload-artifact@v4
