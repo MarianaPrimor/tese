@@ -26,15 +26,15 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 1
-        run: python src/scenario_analysis.py --axis 1
+        run: python src/scenario_analysis.py --axis 1 --excel-path Inputs_EmpresaXReal.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXReal
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: axis1-results
           path: |
-            src/outputs/scenario_analysis/results/axis_1.csv
-            src/outputs/scenario_analysis/plots/axis_1*.png
+            src/outputs/scenario_analysis_EmpresaXReal/results/axis_1.csv
+            src/outputs/scenario_analysis_EmpresaXReal/plots/axis_1*.png
           retention-days: 30
 
   axis2-operators:
@@ -56,15 +56,15 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 2
-        run: python src/scenario_analysis.py --axis 2
+        run: python src/scenario_analysis.py --axis 2 --excel-path Inputs_EmpresaXReal.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXReal
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: axis2-results
           path: |
-            src/outputs/scenario_analysis/results/axis_2.csv
-            src/outputs/scenario_analysis/plots/axis_2*.png
+            src/outputs/scenario_analysis_EmpresaXReal/results/axis_2.csv
+            src/outputs/scenario_analysis_EmpresaXReal/plots/axis_2*.png
           retention-days: 30
 
   axis3-alpha:
@@ -86,13 +86,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 3 weight 0
-        run: python src/scenario_analysis.py --axis 3 --weight-index 0
+        run: python src/scenario_analysis.py --axis 3 --weight-index 0 --excel-path Inputs_EmpresaXReal.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXReal
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: axis3-weight-0
-          path: src/outputs/scenario_analysis/results/axis_3_weight_0.csv
+          path: src/outputs/scenario_analysis_EmpresaXReal/results/axis_3_weight_0.csv
           retention-days: 30
 
   axis3-beta:
@@ -114,13 +114,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 3 weight 1
-        run: python src/scenario_analysis.py --axis 3 --weight-index 1
+        run: python src/scenario_analysis.py --axis 3 --weight-index 1 --excel-path Inputs_EmpresaXReal.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXReal
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: axis3-weight-1
-          path: src/outputs/scenario_analysis/results/axis_3_weight_1.csv
+          path: src/outputs/scenario_analysis_EmpresaXReal/results/axis_3_weight_1.csv
           retention-days: 30
 
   axis3-gamma:
@@ -142,13 +142,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 3 weight 2
-        run: python src/scenario_analysis.py --axis 3 --weight-index 2
+        run: python src/scenario_analysis.py --axis 3 --weight-index 2 --excel-path Inputs_EmpresaXReal.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXReal
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: axis3-weight-2
-          path: src/outputs/scenario_analysis/results/axis_3_weight_2.csv
+          path: src/outputs/scenario_analysis_EmpresaXReal/results/axis_3_weight_2.csv
           retention-days: 30
 
   axis3-delta:
@@ -170,13 +170,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 3 weight 3
-        run: python src/scenario_analysis.py --axis 3 --weight-index 3
+        run: python src/scenario_analysis.py --axis 3 --weight-index 3 --excel-path Inputs_EmpresaXReal.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXReal
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: axis3-weight-3
-          path: src/outputs/scenario_analysis/results/axis_3_weight_3.csv
+          path: src/outputs/scenario_analysis_EmpresaXReal/results/axis_3_weight_3.csv
           retention-days: 30
 
   axis3-epsilon:
@@ -198,13 +198,13 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 3 weight 4
-        run: python src/scenario_analysis.py --axis 3 --weight-index 4
+        run: python src/scenario_analysis.py --axis 3 --weight-index 4 --excel-path Inputs_EmpresaXReal.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXReal
 
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: axis3-weight-4
-          path: src/outputs/scenario_analysis/results/axis_3_weight_4.csv
+          path: src/outputs/scenario_analysis_EmpresaXReal/results/axis_3_weight_4.csv
           retention-days: 30
 
   collect-results:
@@ -219,7 +219,7 @@ jobs:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: src/outputs/scenario_analysis/
+          path: src/outputs/scenario_analysis_EmpresaXReal/
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -232,19 +232,19 @@ jobs:
 
       - name: Reorganize downloaded artifacts
         run: |
-          mkdir -p src/outputs/scenario_analysis/results
+          mkdir -p src/outputs/scenario_analysis_EmpresaXReal/results
           for i in 0 1 2 3 4; do
-            cp src/outputs/scenario_analysis/axis3-weight-$i/axis_3_weight_$i.csv \
-               src/outputs/scenario_analysis/results/
+            cp src/outputs/scenario_analysis_EmpresaXReal/axis3-weight-$i/axis_3_weight_$i.csv \
+               src/outputs/scenario_analysis_EmpresaXReal/results/
           done
 
       - name: Merge axis3 weight CSVs and generate plots
-        run: python src/scenario_analysis.py --axis 3 --merge-weights --plots-only
+        run: python src/scenario_analysis.py --axis 3 --merge-weights --plots-only --excel-path Inputs_EmpresaXReal.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXReal
 
       - name: Commit results to repository
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add src/outputs/scenario_analysis/
-          git commit -m "scenario analysis results $(date +'%Y-%m-%d')" || echo "Nothing to commit"
+          git add src/outputs/scenario_analysis_EmpresaXReal/
+          git commit -m "scenario analysis real instance results $(date +'%Y-%m-%d')" || echo "Nothing to commit"
           git push
