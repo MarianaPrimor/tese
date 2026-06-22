@@ -67,6 +67,14 @@ def ensure_output_dirs():
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def configure_output_dir(output_dir):
+    global OUTPUT_DIR, RESULTS_DIR, PLOTS_DIR
+
+    OUTPUT_DIR = Path(output_dir).resolve()
+    RESULTS_DIR = OUTPUT_DIR / "results"
+    PLOTS_DIR = OUTPUT_DIR / "plots"
+
+
 def load_base_instance(excel_path):
     return load_real_instance(excel_path=str(excel_path))
 
@@ -1284,6 +1292,11 @@ def parse_args():
         help="Path to the Excel input file.",
     )
     parser.add_argument(
+        "--output-dir",
+        default=str(OUTPUT_DIR),
+        help="Directory where scenario analysis CSVs and plots are saved.",
+    )
+    parser.add_argument(
         "--max-workers",
         type=int,
         default=None,
@@ -1295,6 +1308,7 @@ def parse_args():
 def main():
     start_time = time.perf_counter()
     args = parse_args()
+    configure_output_dir(args.output_dir)
     ensure_output_dirs()
 
     excel_path = Path(args.excel_path).resolve()
