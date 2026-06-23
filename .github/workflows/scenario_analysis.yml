@@ -244,11 +244,9 @@ jobs:
       - name: Merge axis3 weight CSVs and generate plots
         run: python src/scenario_analysis.py --axis 3 --merge-weights --plots-only --excel-path Inputs_EmpresaXReal.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXReal
 
-      - name: Commit results to repository
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin master
-          git add src/outputs/scenario_analysis_EmpresaXReal/
-          git commit -m "scenario analysis real instance results $(date +'%Y-%m-%d')" || exit 0
-          git push || (git pull --rebase origin master && git push)
+      - name: Upload final merged results
+        uses: actions/upload-artifact@v4
+        with:
+          name: scenario-analysis-EmpresaXReal-final
+          path: src/outputs/scenario_analysis_EmpresaXReal/
+          retention-days: 30
