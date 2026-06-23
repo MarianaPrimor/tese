@@ -2,11 +2,53 @@ name: Scenario Analysis Overnight Run
 
 on:
   workflow_dispatch:
+    inputs:
+      planning_start:
+        description: "Inicio do horizonte (YYYY-MM-DD; vazio = inicio do mes da procura)"
+        required: false
+        default: ""
+      planning_end:
+        description: "Fim do horizonte (YYYY-MM-DD; vazio = fim do mes da procura)"
+        required: false
+        default: ""
+      operators:
+        description: "Operadores disponiveis por dia"
+        required: true
+        default: "18"
+      shifts:
+        description: "Numero de turnos por dia"
+        required: true
+        type: choice
+        options:
+          - "1"
+          - "2"
+        default: "1"
+      shift_start:
+        description: "Inicio do turno (HH:MM)"
+        required: true
+        default: "08:00"
+      shift_end:
+        description: "Fim do turno (HH:MM)"
+        required: true
+        default: "16:30"
+      non_working_dates:
+        description: "Dias sem trabalho, separados por virgulas (YYYY-MM-DD)"
+        required: false
+        default: ""
   schedule:
     - cron: '0 22 * * *'
 
 permissions:
   contents: write
+
+env:
+  PLANNING_START: ${{ inputs.planning_start || '' }}
+  PLANNING_END: ${{ inputs.planning_end || '' }}
+  OPERATORS: ${{ inputs.operators || '18' }}
+  SHIFTS: ${{ inputs.shifts || '1' }}
+  SHIFT_START: ${{ inputs.shift_start || '08:00' }}
+  SHIFT_END: ${{ inputs.shift_end || '16:30' }}
+  NON_WORKING_DATES: ${{ inputs.non_working_dates || '' }}
 
 jobs:
 
@@ -29,7 +71,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 1
-        run: python src/scenario_analysis.py --axis 1 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest
+        run: python src/scenario_analysis.py --axis 1 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest --planning-start "$PLANNING_START" --planning-end "$PLANNING_END" --operators "$OPERATORS" --shifts "$SHIFTS" --shift-start "$SHIFT_START" --shift-end "$SHIFT_END" --non-working-dates "$NON_WORKING_DATES"
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -59,7 +101,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 2
-        run: python src/scenario_analysis.py --axis 2 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest
+        run: python src/scenario_analysis.py --axis 2 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest --planning-start "$PLANNING_START" --planning-end "$PLANNING_END" --operators "$OPERATORS" --shifts "$SHIFTS" --shift-start "$SHIFT_START" --shift-end "$SHIFT_END" --non-working-dates "$NON_WORKING_DATES"
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -89,7 +131,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 3 weight 0
-        run: python src/scenario_analysis.py --axis 3 --weight-index 0 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest
+        run: python src/scenario_analysis.py --axis 3 --weight-index 0 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest --planning-start "$PLANNING_START" --planning-end "$PLANNING_END" --operators "$OPERATORS" --shifts "$SHIFTS" --shift-start "$SHIFT_START" --shift-end "$SHIFT_END" --non-working-dates "$NON_WORKING_DATES"
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -117,7 +159,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 3 weight 1
-        run: python src/scenario_analysis.py --axis 3 --weight-index 1 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest
+        run: python src/scenario_analysis.py --axis 3 --weight-index 1 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest --planning-start "$PLANNING_START" --planning-end "$PLANNING_END" --operators "$OPERATORS" --shifts "$SHIFTS" --shift-start "$SHIFT_START" --shift-end "$SHIFT_END" --non-working-dates "$NON_WORKING_DATES"
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -145,7 +187,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 3 weight 2
-        run: python src/scenario_analysis.py --axis 3 --weight-index 2 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest
+        run: python src/scenario_analysis.py --axis 3 --weight-index 2 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest --planning-start "$PLANNING_START" --planning-end "$PLANNING_END" --operators "$OPERATORS" --shifts "$SHIFTS" --shift-start "$SHIFT_START" --shift-end "$SHIFT_END" --non-working-dates "$NON_WORKING_DATES"
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -173,7 +215,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 3 weight 3
-        run: python src/scenario_analysis.py --axis 3 --weight-index 3 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest
+        run: python src/scenario_analysis.py --axis 3 --weight-index 3 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest --planning-start "$PLANNING_START" --planning-end "$PLANNING_END" --operators "$OPERATORS" --shifts "$SHIFTS" --shift-start "$SHIFT_START" --shift-end "$SHIFT_END" --non-working-dates "$NON_WORKING_DATES"
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -201,7 +243,7 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run Axis 3 weight 4
-        run: python src/scenario_analysis.py --axis 3 --weight-index 4 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest
+        run: python src/scenario_analysis.py --axis 3 --weight-index 4 --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest --planning-start "$PLANNING_START" --planning-end "$PLANNING_END" --operators "$OPERATORS" --shifts "$SHIFTS" --shift-start "$SHIFT_START" --shift-end "$SHIFT_END" --non-working-dates "$NON_WORKING_DATES"
 
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -211,7 +253,7 @@ jobs:
           retention-days: 30
 
   collect-results:
-    name: "Collect and Commit Results"
+    name: "Collect Results"
     runs-on: ubuntu-latest
     needs: [axis1-demand, axis2-operators, axis3-alpha, axis3-beta, axis3-gamma, axis3-delta, axis3-epsilon]
 
@@ -242,7 +284,7 @@ jobs:
           done
 
       - name: Merge axis3 weight CSVs and generate plots
-        run: python src/scenario_analysis.py --axis 3 --merge-weights --plots-only --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest
+        run: python src/scenario_analysis.py --axis 3 --merge-weights --plots-only --excel-path Inputs_EmpresaXTest.xlsx --output-dir src/outputs/scenario_analysis_EmpresaXTest --planning-start "$PLANNING_START" --planning-end "$PLANNING_END" --operators "$OPERATORS" --shifts "$SHIFTS" --shift-start "$SHIFT_START" --shift-end "$SHIFT_END" --non-working-dates "$NON_WORKING_DATES"
 
       - name: Upload final merged results
         uses: actions/upload-artifact@v4

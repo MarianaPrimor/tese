@@ -2,6 +2,7 @@
 import unicodedata
 
 import openpyxl
+from calendar import monthrange
 from datetime import datetime, date, timedelta
 
 
@@ -12,6 +13,11 @@ CLEANING_OPERATORS = 5
 LINE_AVAILABLE_CAPACITY_MIN = (
     LINE_GROSS_CAPACITY_MIN - END_OF_DAY_CLEANING_TIME_MIN
 )
+
+DEFAULT_PRODUCTIVE_OPERATORS = 18
+DEFAULT_SHIFT_START_MIN = 8 * 60
+DEFAULT_SHIFT_END_MIN = 16 * 60
+DEFAULT_LUNCH_BREAK_MIN = 30
 
 
 def calculate_production_time(n_boxes, cakes_per_box, cakes_per_hour_rate):
@@ -508,6 +514,88 @@ def _read_structure_sheet(ws):
         elif value is not None:
             structure["_extra"][param] = value
 
+    return structure
+
+
+def _default_structure():
+    return {
+        "n_days": None,
+        "planning_start_date": None,
+        "planning_end_date": None,
+        "line_capacity_min": LINE_GROSS_CAPACITY_MIN,
+        "end_of_day_cleaning_time_min": END_OF_DAY_CLEANING_TIME_MIN,
+        "cleaning_operators": CLEANING_OPERATORS,
+        "capacity_L0_min": None,
+        "lead_time_standard_L0_L1L2_days": None,
+        "start_time_L0": None,
+        "end_time_L0": None,
+        "n_ovens": None,
+        "ovens_capacity_min": None,
+        "start_time_L1_prod": None,
+        "end_time_L1_prod": None,
+        "capacity_L1_prod_min": None,
+        "start_time_L1_finish": None,
+        "end_time_L1_finish": None,
+        "capacity_L1_finish_min": None,
+        "tunnel_time_L1_min": None,
+        "start_time_L2_prod": None,
+        "end_time_L2_prod": None,
+        "capacity_L2_prod_min": None,
+        "start_time_L2_finish": None,
+        "end_time_L2_finish": None,
+        "capacity_L2_finish_min": None,
+        "nitrogen_time_L2_min": None,
+        "n_productive_operators": DEFAULT_PRODUCTIVE_OPERATORS,
+        "n_operators": None,
+        "operators_rotate_L0_L1_L2": None,
+        "_extra": {},
+    }
+
+
+def _infer_planning_month(demand):
+    due_dates = [
+        order.get("delivery_calendar_date")
+        for order in demand
+        if order.get("delivery_calendar_date") is not None
+    ]
+
+    if not due_dates:
+        today = date.today()
+        return today.replace(day=1), today.replace(
+            day=monthrange(today.year, today.month)[1]
+        )
+
+    first_due = min(due_dates)
+    last_due = max(due_dates)
+    start_date = first_due.replace(day=1)
+    end_date = last_due.replace(
+        day=monthrange(last_due.year, last_due.month)[1]
+    )
+    return start_date, end_date
+
+
+def _apply_operational_config(structure, operational_config, demand):
+    config = operational_config or {}
+    inferred_start, inferred_end = _infer_planning_month(demand)
+
+    structure["planning_start_date"] = _safe_date(
+        config.get("planning_start_date"),
+        default=structure.get("planning_start_date") or inferred_start,
+    )
+    structure["planning_end_date"] = _safe_date(
+        config.get("planning_end_date"),
+        default=structure.get("planning_end_date") or inferred_end,
+    )
+    structure["n_productive_operators"] = _safe_int(
+        config.get("standard_operators"),
+        default=structure.get("n_productive_operators")
+        or DEFAULT_PRODUCTIVE_OPERATORS,
+    )
+    structure["end_of_day_cleaning_time_min"] = _safe_int(
+        config.get("cleaning_time_min"),
+        default=structure.get("end_of_day_cleaning_time_min")
+        or END_OF_DAY_CLEANING_TIME_MIN,
+    )
     return structure
 
 
@@ -1011,12 +1099,32 @@ def _split_large_orders(demand, refs, final_lines, available_line_time_min):
 def load_real_instance(
     excel_path="Inputs_EmpresaX.xlsx",
     n_synthetic_orders=15,
-    seed=42
+    seed=42,
+    operational_config=None,
 ):
     print(f"Loading instance from {excel_path}...")
 
     wb = openpyxl.load_workbook(excel_path, data_only=True)
-    structure = _read_structure_sheet(wb["1_ESTRUTURA"])
+    structure = (
+        _read_structure_sheet(wb["1_ESTRUTURA"])
+        if "1_ESTRUTURA" in wb.sheetnames
+        else _default_structure()
+    )
+
+    demand_sheet = next(
+        (name for name in wb.sheetnames if "procura" in _normalize_label(name)),
+        None
+    )
+    preliminary_demand = (
+        _read_demand_sheet(wb[demand_sheet], working_days=None)
+        if demand_sheet is not None
+        else []
+    )
+    structure = _apply_operational_config(
+        structure,
+        operational_config,
+        preliminary_demand,
+    )
 
     holidays = set()
 
@@ -1027,6 +1135,18 @@ def load_real_instance(
 
     if holidays_sheet is not None:
         holidays = _read_holidays_sheet(wb[holidays_sheet])
+
+    holidays.update(
+        holiday
+        for holiday in (
+            _safe_date(value)
+            for value in (operational_config or {}).get(
+                "non_working_dates",
+                [],
+            )
+        )
+        if holiday is not None
+    )
 
     if not structure["planning_start_date"] or not structure["planning_end_date"]:
         raise ValueError(
@@ -1074,11 +1194,6 @@ def load_real_instance(
         ref_machine_requirements = {}
         machines_source = "not available"
 
-    demand_sheet = next(
-        (name for name in wb.sheetnames if "procura" in _normalize_label(name)),
-        None
-    )
-
     if demand_sheet is not None:
         demand = _read_demand_sheet(
             wb[demand_sheet],
@@ -1113,11 +1228,38 @@ def load_real_instance(
 
     demand_before_split = len(demand)
 
+    shift_start_min = _safe_int(
+        (operational_config or {}).get("shift_start_min"),
+        default=DEFAULT_SHIFT_START_MIN,
+    )
+    shift_end_min = _safe_int(
+        (operational_config or {}).get("shift_end_min"),
+        default=DEFAULT_SHIFT_END_MIN,
+    )
+    shifts = max(
+        1,
+        _safe_int((operational_config or {}).get("shifts"), default=1),
+    )
+    lunch_break_min = _safe_int(
+        (operational_config or {}).get("lunch_break_min"),
+        default=DEFAULT_LUNCH_BREAK_MIN,
+    )
+    gross_capacity = max(
+        0,
+        shift_end_min - shift_start_min,
+    ) * shifts
+    available_capacity = max(
+        0,
+        gross_capacity
+        - lunch_break_min * shifts
+        - structure["end_of_day_cleaning_time_min"] * shifts,
+    )
+
     demand = _split_large_orders(
         demand,
         refs,
         ["L1", "L2"],
-        structure["line_capacity_min"] - structure["end_of_day_cleaning_time_min"]
+        available_capacity,
     )
 
     demand_after_split = len(demand)
@@ -1134,8 +1276,7 @@ def load_real_instance(
         "cleaning_operators": structure["cleaning_operators"],
 
         "available_line_time_min": (
-            structure["line_capacity_min"]
-            - structure["end_of_day_cleaning_time_min"]
+            available_capacity
         ),
         "time_bucket_min": 30,
         "monday_days": [
@@ -1143,6 +1284,26 @@ def load_real_instance(
             for i, working_day in enumerate(working_days)
             if working_day.weekday() == 0
         ],
+        "standard_operators_by_day": {
+            day: standard_operators
+            for day in range(1, structure["n_days"] + 1)
+        },
+        "daily_capacity_min": {
+            day: available_capacity
+            for day in range(1, structure["n_days"] + 1)
+        },
+        "daily_shift_start_min": {
+            day: shift_start_min
+            for day in range(1, structure["n_days"] + 1)
+        },
+        "daily_shift_end_min": {
+            day: shift_start_min + gross_capacity
+            for day in range(1, structure["n_days"] + 1)
+        },
+        "daily_shifts": {
+            day: shifts
+            for day in range(1, structure["n_days"] + 1)
+        },
 
         "refs": refs,
         "families": families,

@@ -115,10 +115,7 @@ def apply_dashboard_overrides(
         end_min = minutes_from_time(end_times_by_day[day])
 
         selected_duration = max(0, end_min - start_min)
-        gross_capacity = min(
-            selected_duration,
-            SHIFT_GROSS_CAPACITY_MIN,
-        ) * n_shifts
+        gross_capacity = selected_duration * n_shifts
 
         available_capacity = max(
             0,
@@ -3098,7 +3095,7 @@ def render_configuration_plan():
             with day_col5:
                 end_times_by_day[day_index] = st.time_input(
                     "Fim",
-                    value=time(16, 0),
+                    value=time(16, 30),
                     key=f"end_time_day_{day_index}",
                 )
     

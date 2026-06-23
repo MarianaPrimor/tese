@@ -1,6 +1,7 @@
 import argparse
 import copy
 import io
+import json
 import math
 import os
 import time
@@ -75,8 +76,47 @@ def configure_output_dir(output_dir):
     PLOTS_DIR = OUTPUT_DIR / "plots"
 
 
+OPERATIONAL_CONFIG = {}
+
+
 def load_base_instance(excel_path):
-    return load_real_instance(excel_path=str(excel_path))
+    operational_config = dict(OPERATIONAL_CONFIG)
+
+    if not operational_config:
+        operational_config = json.loads(
+            os.environ.get("SCENARIO_OPERATIONAL_CONFIG", "{}")
+        )
+
+    return load_real_instance(
+        excel_path=str(excel_path),
+        operational_config=operational_config,
+    )
+
+
+def parse_hhmm(value):
+    hours, minutes = str(value).split(":", maxsplit=1)
+    return int(hours) * 60 + int(minutes)
+
+
+def configure_operational_inputs(args):
+    global OPERATIONAL_CONFIG
+
+    OPERATIONAL_CONFIG = {
+        "planning_start_date": args.planning_start,
+        "planning_end_date": args.planning_end,
+        "standard_operators": args.operators,
+        "shifts": args.shifts,
+        "shift_start_min": parse_hhmm(args.shift_start),
+        "shift_end_min": parse_hhmm(args.shift_end),
+        "lunch_break_min": args.lunch_minutes,
+        "cleaning_time_min": args.cleaning_minutes,
+        "non_working_dates": [
+            value.strip()
+            for value in args.non_working_dates.split(",")
+            if value.strip()
+        ],
+    }
+    os.environ["SCENARIO_OPERATIONAL_CONFIG"] = json.dumps(OPERATIONAL_CONFIG)
 
 
 def total_demand_boxes(instance):
@@ -1302,6 +1342,27 @@ def parse_args():
         default=None,
         help="Number of parallel processes. Defaults to available CPU count.",
     )
+    parser.add_argument(
+        "--planning-start",
+        default=None,
+        help="Planning horizon start date (YYYY-MM-DD). Defaults to the first day of the demand month.",
+    )
+    parser.add_argument(
+        "--planning-end",
+        default=None,
+        help="Planning horizon end date (YYYY-MM-DD). Defaults to the last day of the demand month.",
+    )
+    parser.add_argument("--operators", type=int, default=18)
+    parser.add_argument("--shifts", type=int, choices=[1, 2], default=1)
+    parser.add_argument("--shift-start", default="08:00")
+    parser.add_argument("--shift-end", default="16:30")
+    parser.add_argument("--lunch-minutes", type=int, default=30)
+    parser.add_argument("--cleaning-minutes", type=int, default=30)
+    parser.add_argument(
+        "--non-working-dates",
+        default="",
+        help="Comma-separated non-working dates in YYYY-MM-DD format.",
+    )
     return parser.parse_args()
 
 
@@ -1309,6 +1370,7 @@ def main():
     start_time = time.perf_counter()
     args = parse_args()
     configure_output_dir(args.output_dir)
+    configure_operational_inputs(args)
     ensure_output_dirs()
 
     excel_path = Path(args.excel_path).resolve()
