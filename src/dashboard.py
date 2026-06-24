@@ -43,6 +43,7 @@ ELITE_SIZE = 5
 TOURNAMENT_SIZE = 3
 STAGNATION_K = 35
 RANDOM_SEED = 42
+DEFAULT_OPERATORS = 20
 LUNCH_BREAK_MIN = 30
 SHIFT_GROSS_CAPACITY_MIN = 8 * 60
 
@@ -140,6 +141,11 @@ def apply_dashboard_overrides(
     instance["days"] = [f"day_{i + 1}" for i in range(len(working_days))]
     instance["monday_days"] = monday_days
     instance["standard_operators_by_day"] = operators_by_day
+    instance["standard_operators"] = (
+        max(operators_by_day.values())
+        if operators_by_day
+        else DEFAULT_OPERATORS
+    )
     instance["daily_shift_start_min"] = daily_shift_start_min
     instance["daily_shift_end_min"] = daily_shift_end_min
     instance["daily_capacity_min"] = daily_capacity_min
@@ -3049,7 +3055,7 @@ def render_configuration_plan():
         st.error("O horizonte selecionado não tem dias úteis para planear.")
         return
     
-    default_operators = int(base_instance.get("standard_operators", 0) or 0)
+    default_operators = DEFAULT_OPERATORS
     operators_by_day = {}
     start_times_by_day = {}
     end_times_by_day = {}
