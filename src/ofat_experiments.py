@@ -1,7 +1,10 @@
+import argparse
 import csv
 import statistics
 import time
 from pathlib import Path
+
+import pandas as pd
 
 from generate_instance import load_real_instance
 from geneticalgorithm import run_genetic_algorithm
@@ -12,7 +15,7 @@ INSTANCE_FILE = (SCRIPT_DIR / "../Inputs_EmpresaX.xlsx").resolve()
 SEEDS = [0, 7, 13, 42, 99]
 N_RUNS = len(SEEDS)
 MAX_GENERATIONS = 200
-OBJECTIVE_VERSION = "normalised_v2_l1_l2_finishing"
+OBJECTIVE_VERSION = "normalised_v3_capacity_utilisation"
 CHECKPOINT_FILE = SCRIPT_DIR / "ofat_run_checkpoint_normalised.csv"
 
 CHECKPOINT_FIELDS = [
@@ -33,7 +36,15 @@ CHECKPOINT_FIELDS = [
     "elapsed_s",
 ]
 
-instance = load_real_instance(str(INSTANCE_FILE))
+instance = load_real_instance(
+    str(INSTANCE_FILE),
+    operational_config={
+        "shift_start_min": 480,
+        "shift_end_min": 990,
+        "lunch_break_min": 30,
+        "cleaning_time_min": 30,
+    },
+)
 
 
 def instance_signature():
@@ -233,6 +244,137 @@ def run_batch(
     return summary
 
 
+def run_population_seed(population_size, seed, output_path):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    start_time = time.perf_counter()
+    _, metrics, actual_generations = run_genetic_algorithm(
+        instance,
+        population_size=population_size,
+        generations=MAX_GENERATIONS,
+        mutation_rate=0.10,
+        elite_size=5,
+        tournament_size=3,
+        stagnation_k=20,
+        seed=seed,
+        verbose=False,
+    )
+    elapsed = time.perf_counter() - start_time
+
+    row = {
+        "objective_version": OBJECTIVE_VERSION,
+        "instance": INSTANCE_FILE.name,
+        "population_size": population_size,
+        "mutation_rate": 0.10,
+        "stagnation_k": 20,
+        "elite_size": 5,
+        "tournament_size": 3,
+        "max_generations": MAX_GENERATIONS,
+        "seed": seed,
+        "fitness": metrics["normalised_fitness"],
+        "generations": actual_generations,
+        "elapsed_s": elapsed,
+        "postponed_orders": metrics.get("postponed_orders", 0),
+        "postponed_boxes": metrics.get("postponed_boxes", 0),
+        "delay_days": metrics.get("delay_days_total", 0),
+        "setup_time_min": metrics.get("setup_total_min", 0),
+        "economic_value": metrics.get("scheduled_economic_value", 0),
+        "capacity_utilisation": metrics.get("capacity_utilisation_ratio", 0),
+        "operator_minutes": metrics.get("operator_usage_minutes", 0),
+    }
+
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=row.keys())
+        writer.writeheader()
+        writer.writerow(row)
+
+    print(
+        f"Saved {output_path} | population={population_size} | "
+        f"seed={seed} | fitness={row['fitness']:.8f}",
+        flush=True,
+    )
+
+
+def aggregate_population_results(input_dir, output_xlsx):
+    input_dir = Path(input_dir)
+    result_files = sorted(input_dir.rglob("population_*_seed_*.csv"))
+
+    if not result_files:
+        raise FileNotFoundError(
+            f"No population result CSV files found under {input_dir}."
+        )
+
+    individual = pd.concat(
+        [pd.read_csv(path) for path in result_files],
+        ignore_index=True,
+    )
+    individual = individual.sort_values(
+        ["population_size", "seed"],
+    ).reset_index(drop=True)
+
+    summary = (
+        individual.groupby("population_size", as_index=False)
+        .agg(
+            mean_fitness=("fitness", "mean"),
+            std_fitness=("fitness", "std"),
+            best_fitness=("fitness", "min"),
+            mean_generations=("generations", "mean"),
+            mean_time_s=("elapsed_s", "mean"),
+            mean_postponed_orders=("postponed_orders", "mean"),
+            mean_postponed_boxes=("postponed_boxes", "mean"),
+            mean_delay_days=("delay_days", "mean"),
+            mean_setup_time_min=("setup_time_min", "mean"),
+            mean_economic_value=("economic_value", "mean"),
+            mean_capacity_utilisation=("capacity_utilisation", "mean"),
+            mean_operator_minutes=("operator_minutes", "mean"),
+        )
+        .sort_values("population_size")
+        .reset_index(drop=True)
+    )
+    best_population = int(
+        summary.loc[summary["mean_fitness"].idxmin(), "population_size"]
+    )
+    summary["best_population"] = ""
+    summary.loc[summary["population_size"] == best_population, "best_population"] = (
+        "BEST"
+    )
+
+    configuration = pd.DataFrame(
+        [
+            {"parameter": "Population sizes", "value": "50, 100, 150, 200"},
+            {"parameter": "Mutation rate", "value": 0.10},
+            {"parameter": "Stagnation k", "value": 20},
+            {"parameter": "Seeds", "value": "0, 7, 13, 42, 99"},
+            {"parameter": "Elite size", "value": 5},
+            {"parameter": "Tournament size", "value": 3},
+            {"parameter": "Maximum generations", "value": MAX_GENERATIONS},
+            {"parameter": "Productive minutes per line/day", "value": 450},
+            {"parameter": "Objective version", "value": OBJECTIVE_VERSION},
+            {"parameter": "Best population size", "value": best_population},
+        ]
+    )
+
+    output_xlsx = Path(output_xlsx)
+    output_xlsx.parent.mkdir(parents=True, exist_ok=True)
+
+    with pd.ExcelWriter(output_xlsx, engine="openpyxl") as writer:
+        individual.to_excel(
+            writer,
+            sheet_name="Individual Results",
+            index=False,
+        )
+        summary.to_excel(writer, sheet_name="Summary", index=False)
+        configuration.to_excel(
+            writer,
+            sheet_name="Configuration",
+            index=False,
+        )
+
+    print(f"Created Excel report: {output_xlsx}", flush=True)
+    print(f"Best population size: {best_population}", flush=True)
+
+
 def main():
     print("\n" + "=" * 50)
     print("EXPERIMENT 1 - POPULATION SIZE")
@@ -294,4 +436,30 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--population-size", type=int)
+    parser.add_argument("--seed", type=int)
+    parser.add_argument("--output")
+    parser.add_argument("--aggregate-population-results")
+    parser.add_argument("--output-xlsx")
+    args = parser.parse_args()
+
+    if args.aggregate_population_results:
+        if not args.output_xlsx:
+            parser.error("--output-xlsx is required when aggregating results.")
+        aggregate_population_results(
+            args.aggregate_population_results,
+            args.output_xlsx,
+        )
+    elif args.population_size is not None or args.seed is not None:
+        if args.population_size is None or args.seed is None or not args.output:
+            parser.error(
+                "--population-size, --seed and --output must be used together."
+            )
+        run_population_seed(
+            args.population_size,
+            args.seed,
+            args.output,
+        )
+    else:
+        main()
