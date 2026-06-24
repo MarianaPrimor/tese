@@ -1158,7 +1158,7 @@ def run_axis_2(excel_path, max_workers):
     if csv_path.exists():
         print(f"Axis 2 GA skipped because {csv_path} already exists.")
         base_instance = load_base_instance(excel_path)
-        baseline_operators = base_instance.get("standard_operators", 18)
+        baseline_operators = base_instance.get("standard_operators", 20)
         return [], plot_axis_2(csv_path, baseline_operators)
 
     jobs = [
@@ -1184,7 +1184,7 @@ def run_axis_2(excel_path, max_workers):
     csv_created = [raw_csv, summary_csv]
 
     base_instance = load_base_instance(excel_path)
-    baseline_operators = base_instance.get("standard_operators", 18)
+    baseline_operators = base_instance.get("standard_operators", 20)
     plots_created = plot_axis_2(raw_csv, baseline_operators)
     return csv_created, plots_created
 
@@ -1276,7 +1276,7 @@ def regenerate_plots(axis, excel_path):
         csv_path = RESULTS_DIR / "axis_2.csv"
         if csv_path.exists():
             base_instance = load_base_instance(excel_path)
-            baseline_operators = base_instance.get("standard_operators", 18)
+            baseline_operators = base_instance.get("standard_operators", 20)
             created.extend(plot_axis_2(csv_path, baseline_operators))
         else:
             print(f"Cannot regenerate Axis 2 plots: missing {csv_path}")
@@ -1349,7 +1349,7 @@ def parse_args():
         default=None,
         help="Planning horizon end date (YYYY-MM-DD). Defaults to the last day of the demand month.",
     )
-    parser.add_argument("--operators", type=int, default=18)
+    parser.add_argument("--operators", type=int, default=20)
     parser.add_argument("--shifts", type=int, choices=[1, 2], default=1)
     parser.add_argument("--shift-start", default="08:00")
     parser.add_argument("--shift-end", default="16:30")

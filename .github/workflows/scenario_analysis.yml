@@ -14,7 +14,7 @@ on:
       operators:
         description: "Operadores disponiveis por dia"
         required: true
-        default: "18"
+        default: "20"
       shifts:
         description: "Numero de turnos por dia"
         required: true
@@ -44,7 +44,7 @@ permissions:
 env:
   PLANNING_START: ${{ inputs.planning_start || '' }}
   PLANNING_END: ${{ inputs.planning_end || '' }}
-  OPERATORS: ${{ inputs.operators || '18' }}
+  OPERATORS: ${{ inputs.operators || '20' }}
   SHIFTS: ${{ inputs.shifts || '1' }}
   SHIFT_START: ${{ inputs.shift_start || '08:00' }}
   SHIFT_END: ${{ inputs.shift_end || '16:30' }}
