@@ -1,0 +1,83 @@
+name: OFAT Test 3 - Stagnation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stagnation-runs:
+    name: "Stagnation=${{ matrix.stagnation }} | seed=${{ matrix.seed }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      max-parallel: 30
+      matrix:
+        stagnation: [5, 10, 20, 30, 50, 200]
+        seed: [0, 7, 13, 42, 99]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run stagnation experiment
+        run: >-
+          python src/ofat_experiments.py
+          --stagnation-k ${{ matrix.stagnation }}
+          --seed ${{ matrix.seed }}
+          --output ofat_test_3/stagnation_${{ matrix.stagnation }}_seed_${{ matrix.seed }}.csv
+
+      - name: Upload individual result
+        uses: actions/upload-artifact@v4
+        with:
+          name: ofat-test-3-stagnation${{ matrix.stagnation }}-seed${{ matrix.seed }}
+          path: ofat_test_3/stagnation_${{ matrix.stagnation }}_seed_${{ matrix.seed }}.csv
+          retention-days: 30
+
+  collect-results:
+    name: Create OFAT Test 3 Excel
+    runs-on: ubuntu-latest
+    needs: stagnation-runs
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all individual results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ofat-test-3-*
+          path: ofat_test_3_downloads
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build Excel report
+        run: >-
+          python src/ofat_experiments.py
+          --aggregate-stagnation-results ofat_test_3_downloads
+          --output-xlsx OFAT_Test_3_Stagnation.xlsx
+
+      - name: Upload final Excel report
+        uses: actions/upload-artifact@v4
+        with:
+          name: OFAT-Test-3-Stagnation-Excel
+          path: OFAT_Test_3_Stagnation.xlsx
+          retention-days: 30
