@@ -307,17 +307,27 @@ jobs:
         run: |
           mkdir -p src/outputs/scenario_analysis_v3/results
           mkdir -p src/outputs/scenario_analysis_v3/plots
-          cp src/outputs/scenario_analysis_v3/axis1-results/axis_1.csv \
-             src/outputs/scenario_analysis_v3/results/
-          cp src/outputs/scenario_analysis_v3/axis2-results/axis_2.csv \
-             src/outputs/scenario_analysis_v3/results/
-          cp src/outputs/scenario_analysis_v3/axis1-results/axis_1*.png \
-             src/outputs/scenario_analysis_v3/plots/ || true
-          cp src/outputs/scenario_analysis_v3/axis2-results/axis_2*.png \
-             src/outputs/scenario_analysis_v3/plots/ || true
+          find src/outputs/scenario_analysis_v3/axis1-results \
+            -type f -name 'axis_1.csv' \
+            -exec cp {} src/outputs/scenario_analysis_v3/results/ \;
+          find src/outputs/scenario_analysis_v3/axis2-results \
+            -type f -name 'axis_2.csv' \
+            -exec cp {} src/outputs/scenario_analysis_v3/results/ \;
+          find src/outputs/scenario_analysis_v3/axis1-results \
+            -type f -name 'axis_1*.png' \
+            -exec cp {} src/outputs/scenario_analysis_v3/plots/ \;
+          find src/outputs/scenario_analysis_v3/axis2-results \
+            -type f -name 'axis_2*.png' \
+            -exec cp {} src/outputs/scenario_analysis_v3/plots/ \;
           for i in 0 1 2 3 4 5; do
-            cp src/outputs/scenario_analysis_v3/axis3-weight-$i/axis_3_weight_$i.csv \
-               src/outputs/scenario_analysis_v3/results/
+            find src/outputs/scenario_analysis_v3/axis3-weight-$i \
+              -type f -name "axis_3_weight_$i.csv" \
+              -exec cp {} src/outputs/scenario_analysis_v3/results/ \;
+          done
+          test -f src/outputs/scenario_analysis_v3/results/axis_1.csv
+          test -f src/outputs/scenario_analysis_v3/results/axis_2.csv
+          for i in 0 1 2 3 4 5; do
+            test -f src/outputs/scenario_analysis_v3/results/axis_3_weight_$i.csv
           done
 
       - name: Merge axis3 weight CSVs and generate plots
