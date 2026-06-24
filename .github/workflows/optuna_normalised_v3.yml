@@ -1,0 +1,71 @@
+name: Optuna - Normalised Objective V3
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  optuna-study:
+    name: Run 60 Optuna trials
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore Optuna checkpoints
+        uses: actions/cache@v4
+        with:
+          path: |
+            src/optuna_study_normalised_v3.db
+            src/optuna_results_normalised_v3.csv
+            src/optuna_seed_checkpoint_normalised_v3.csv
+            src/optuna_configuration_normalised_v3.json
+          key: optuna-normalised-v3-${{ github.run_id }}
+          restore-keys: |
+            optuna-normalised-v3-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install project dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Optuna visualisation dependencies
+        run: pip install optuna plotly "kaleido==0.2.1" scikit-learn
+
+      - name: Run Optuna study
+        run: python src/optuna_test.py
+
+      - name: Regenerate figures
+        if: always()
+        run: python src/generate_optuna_figures.py
+        continue-on-error: true
+
+      - name: Upload study and checkpoints
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optuna-normalised-v3-study
+          path: |
+            src/optuna_study_normalised_v3.db
+            src/optuna_results_normalised_v3.csv
+            src/optuna_seed_checkpoint_normalised_v3.csv
+            src/optuna_configuration_normalised_v3.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload Optuna figures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optuna-normalised-v3-figures
+          path: src/optuna_figures_normalised_v3/
+          if-no-files-found: warn
+          retention-days: 30

@@ -1,6 +1,7 @@
 ﻿import csv
 import json
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import optuna
@@ -15,14 +16,14 @@ INSTANCE_FILE = (SCRIPT_DIR / "../Inputs_EmpresaX.xlsx").resolve()
 N_TRIALS = 60
 MAX_GENERATIONS = 200
 SEEDS_FOR_GA = [0, 42, 99]
-STUDY_NAME = "ga_parameter_tuning_normalised_v2"
-STORAGE_FILE = SCRIPT_DIR / "optuna_study_normalised.db"
+STUDY_NAME = "ga_parameter_tuning_normalised_v3"
+STORAGE_FILE = SCRIPT_DIR / "optuna_study_normalised_v3.db"
 STORAGE_PATH = f"sqlite:///{STORAGE_FILE.as_posix()}"
-RESULTS_FILE = SCRIPT_DIR / "optuna_results_normalised.csv"
-SEED_CACHE_FILE = SCRIPT_DIR / "optuna_seed_checkpoint_normalised.csv"
-CONFIG_FILE = SCRIPT_DIR / "optuna_configuration_normalised.json"
-FIGURES_DIR = SCRIPT_DIR / "optuna_figures_normalised"
-OBJECTIVE_VERSION = "normalised_v2_l1_l2_finishing"
+RESULTS_FILE = SCRIPT_DIR / "optuna_results_normalised_v3.csv"
+SEED_CACHE_FILE = SCRIPT_DIR / "optuna_seed_checkpoint_normalised_v3.csv"
+CONFIG_FILE = SCRIPT_DIR / "optuna_configuration_normalised_v3.json"
+FIGURES_DIR = SCRIPT_DIR / "optuna_figures_normalised_v3"
+OBJECTIVE_VERSION = "normalised_v3_capacity_utilisation"
 
 SEED_CACHE_FIELDS = [
     "objective_version",
@@ -36,7 +37,15 @@ SEED_CACHE_FIELDS = [
     "elapsed_s",
 ]
 
-instance = load_real_instance(str(INSTANCE_FILE))
+instance = load_real_instance(
+    str(INSTANCE_FILE),
+    operational_config={
+        "shift_start_min": 480,
+        "shift_end_min": 990,
+        "lunch_break_min": 30,
+        "cleaning_time_min": 30,
+    },
+)
 
 
 def instance_signature():
@@ -99,13 +108,41 @@ def cache_key(population_size, mutation_rate, stagnation_k, seed):
     )
 
 
+def run_seed_evaluation(
+    instance_data,
+    population_size,
+    mutation_rate,
+    stagnation_k,
+    seed,
+):
+    start_time = time.perf_counter()
+    _, metrics, generations = run_genetic_algorithm(
+        instance_data,
+        population_size=population_size,
+        mutation_rate=mutation_rate,
+        stagnation_k=stagnation_k,
+        generations=MAX_GENERATIONS,
+        elite_size=5,
+        tournament_size=3,
+        seed=seed,
+        verbose=False,
+    )
+    return {
+        "seed": seed,
+        "fitness": metrics["normalised_fitness"],
+        "generations": generations,
+        "elapsed_s": time.perf_counter() - start_time,
+    }
+
+
 def objective(trial):
     population_size = trial.suggest_int("population_size", 150, 200)
     mutation_rate = trial.suggest_float("mutation_rate", 0.05, 0.10)
     stagnation_k = trial.suggest_int("stagnation_k", 20, 60)
-    fitnesses = []
+    fitness_by_seed = {}
+    missing_seeds = []
 
-    for run_index, seed in enumerate(SEEDS_FOR_GA, start=1):
+    for seed in SEEDS_FOR_GA:
         key = cache_key(
             population_size,
             mutation_rate,
@@ -121,43 +158,71 @@ def objective(trial):
                 f"using checkpoint fitness={fitness:.8f}",
                 flush=True,
             )
+            fitness_by_seed[seed] = fitness
         else:
-            print(
-                f"Trial {trial.number} seed {seed} "
-                f"({run_index}/{len(SEEDS_FOR_GA)}): running",
-                flush=True,
-            )
-            start_time = time.perf_counter()
-            _, metrics, generations = run_genetic_algorithm(
-                instance,
-                population_size=population_size,
-                mutation_rate=mutation_rate,
-                stagnation_k=stagnation_k,
-                generations=MAX_GENERATIONS,
-                elite_size=5,
-                tournament_size=3,
-                seed=seed,
-                verbose=False,
-            )
-            elapsed = time.perf_counter() - start_time
-            fitness = metrics["normalised_fitness"]
-            seed_cache[key] = {
-                "objective_version": OBJECTIVE_VERSION,
-                "instance_signature": INSTANCE_SIGNATURE,
-                "population_size": population_size,
-                "mutation_rate": mutation_rate,
-                "stagnation_k": stagnation_k,
-                "seed": seed,
-                "fitness": f"{fitness:.12f}",
-                "generations": generations,
-                "elapsed_s": f"{elapsed:.3f}",
-            }
-            save_seed_cache()
+            missing_seeds.append(seed)
 
-        fitnesses.append(fitness)
+    if missing_seeds:
+        print(
+            f"Trial {trial.number}: running seeds {missing_seeds} in parallel",
+            flush=True,
+        )
+        with ProcessPoolExecutor(max_workers=len(missing_seeds)) as executor:
+            futures = {
+                executor.submit(
+                    run_seed_evaluation,
+                    instance,
+                    population_size,
+                    mutation_rate,
+                    stagnation_k,
+                    seed,
+                ): seed
+                for seed in missing_seeds
+            }
+
+            for future in as_completed(futures):
+                seed = futures[future]
+                result = future.result()
+                fitness = result["fitness"]
+                generations = result["generations"]
+                elapsed = result["elapsed_s"]
+                fitness_by_seed[seed] = fitness
+
+                key = cache_key(
+                    population_size,
+                    mutation_rate,
+                    stagnation_k,
+                    seed,
+                )
+                seed_cache[key] = {
+                    "objective_version": OBJECTIVE_VERSION,
+                    "instance_signature": INSTANCE_SIGNATURE,
+                    "population_size": population_size,
+                    "mutation_rate": mutation_rate,
+                    "stagnation_k": stagnation_k,
+                    "seed": seed,
+                    "fitness": f"{fitness:.12f}",
+                    "generations": generations,
+                    "elapsed_s": f"{elapsed:.3f}",
+                }
+                save_seed_cache()
+                print(
+                    f"Trial {trial.number} seed {seed}: "
+                    f"fitness={fitness:.8f} | generations={generations} | "
+                    f"time={elapsed:.1f}s",
+                    flush=True,
+                )
+
+    fitnesses = [fitness_by_seed[seed] for seed in SEEDS_FOR_GA]
+
+    for run_index, seed in enumerate(SEEDS_FOR_GA, start=1):
+        fitness = fitness_by_seed[seed]
         trial.set_user_attr(f"seed_{seed}_fitness", fitness)
-        trial.set_user_attr("completed_seed_runs", len(fitnesses))
-        trial.report(sum(fitnesses) / len(fitnesses), step=run_index)
+        trial.set_user_attr("completed_seed_runs", run_index)
+        trial.report(
+            sum(fitnesses[:run_index]) / run_index,
+            step=run_index,
+        )
 
     return sum(fitnesses) / len(fitnesses)
 
@@ -207,6 +272,7 @@ def save_configuration():
         "storage_file": str(STORAGE_FILE),
         "n_completed_trials_target": N_TRIALS,
         "max_generations": MAX_GENERATIONS,
+        "productive_minutes_per_line_day": 450,
         "seeds": SEEDS_FOR_GA,
         "population_size": [150, 200],
         "mutation_rate": [0.05, 0.10],
