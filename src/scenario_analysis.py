@@ -1113,9 +1113,6 @@ def plot_axis_3(csv_path):
         plt.close()
         created.append(path)
 
-    created.append(plot_axis_3_parallel_coordinates(df))
-    created.append(plot_axis_3_euros_heatmap(df))
-
     return created
 
 
