@@ -1,4 +1,4 @@
-name: Optuna - Normalised Objective V3
+name: Optuna - V3 - 50 Trials - Seed 42
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   optuna-study:
-    name: Run 60 Optuna trials
+    name: Run 50 Optuna trials
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -20,13 +20,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            src/optuna_study_normalised_v3.db
-            src/optuna_results_normalised_v3.csv
-            src/optuna_seed_checkpoint_normalised_v3.csv
-            src/optuna_configuration_normalised_v3.json
-          key: optuna-normalised-v3-${{ github.run_id }}
+            src/optuna_study_normalised_v3_single_seed.db
+            src/optuna_results_normalised_v3_single_seed.csv
+            src/optuna_seed_checkpoint_normalised_v3_single_seed.csv
+            src/optuna_configuration_normalised_v3_single_seed.json
+          key: optuna-normalised-v3-single-seed-${{ github.run_id }}
           restore-keys: |
-            optuna-normalised-v3-
+            optuna-normalised-v3-single-seed-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -52,12 +52,12 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: optuna-normalised-v3-study
+          name: optuna-normalised-v3-single-seed-study
           path: |
-            src/optuna_study_normalised_v3.db
-            src/optuna_results_normalised_v3.csv
-            src/optuna_seed_checkpoint_normalised_v3.csv
-            src/optuna_configuration_normalised_v3.json
+            src/optuna_study_normalised_v3_single_seed.db
+            src/optuna_results_normalised_v3_single_seed.csv
+            src/optuna_seed_checkpoint_normalised_v3_single_seed.csv
+            src/optuna_configuration_normalised_v3_single_seed.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -65,7 +65,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: optuna-normalised-v3-figures
-          path: src/optuna_figures_normalised_v3/
+          name: optuna-normalised-v3-single-seed-figures
+          path: src/optuna_figures_normalised_v3_single_seed/
           if-no-files-found: warn
           retention-days: 30

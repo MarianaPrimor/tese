@@ -13,16 +13,16 @@ from geneticalgorithm import run_genetic_algorithm
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 INSTANCE_FILE = (SCRIPT_DIR / "../Inputs_EmpresaX.xlsx").resolve()
-N_TRIALS = 60
+N_TRIALS = 50
 MAX_GENERATIONS = 200
-SEEDS_FOR_GA = [0, 42, 99]
-STUDY_NAME = "ga_parameter_tuning_normalised_v3"
-STORAGE_FILE = SCRIPT_DIR / "optuna_study_normalised_v3.db"
+SEEDS_FOR_GA = [42]
+STUDY_NAME = "ga_parameter_tuning_normalised_v3_single_seed"
+STORAGE_FILE = SCRIPT_DIR / "optuna_study_normalised_v3_single_seed.db"
 STORAGE_PATH = f"sqlite:///{STORAGE_FILE.as_posix()}"
-RESULTS_FILE = SCRIPT_DIR / "optuna_results_normalised_v3.csv"
-SEED_CACHE_FILE = SCRIPT_DIR / "optuna_seed_checkpoint_normalised_v3.csv"
-CONFIG_FILE = SCRIPT_DIR / "optuna_configuration_normalised_v3.json"
-FIGURES_DIR = SCRIPT_DIR / "optuna_figures_normalised_v3"
+RESULTS_FILE = SCRIPT_DIR / "optuna_results_normalised_v3_single_seed.csv"
+SEED_CACHE_FILE = SCRIPT_DIR / "optuna_seed_checkpoint_normalised_v3_single_seed.csv"
+CONFIG_FILE = SCRIPT_DIR / "optuna_configuration_normalised_v3_single_seed.json"
+FIGURES_DIR = SCRIPT_DIR / "optuna_figures_normalised_v3_single_seed"
 OBJECTIVE_VERSION = "normalised_v3_capacity_utilisation"
 
 SEED_CACHE_FIELDS = [

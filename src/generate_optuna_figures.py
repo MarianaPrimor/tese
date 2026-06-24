@@ -4,10 +4,10 @@ import optuna
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-STUDY_NAME = "ga_parameter_tuning_normalised_v3"
-STORAGE_FILE = SCRIPT_DIR / "optuna_study_normalised_v3.db"
+STUDY_NAME = "ga_parameter_tuning_normalised_v3_single_seed"
+STORAGE_FILE = SCRIPT_DIR / "optuna_study_normalised_v3_single_seed.db"
 STORAGE_PATH = f"sqlite:///{STORAGE_FILE.as_posix()}"
-FIGURES_DIR = SCRIPT_DIR / "optuna_figures_normalised_v3"
+FIGURES_DIR = SCRIPT_DIR / "optuna_figures_normalised_v3_single_seed"
 
 
 def save_figure(name, factory):
