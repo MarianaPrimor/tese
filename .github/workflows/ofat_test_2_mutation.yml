@@ -1,0 +1,83 @@
+name: OFAT Test 2 - Mutation Rate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mutation-runs:
+    name: "Mutation=${{ matrix.mutation }} | seed=${{ matrix.seed }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 30
+      matrix:
+        mutation: ["0.01", "0.03", "0.05", "0.08", "0.10", "0.15"]
+        seed: [0, 7, 13, 42, 99]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run mutation-rate experiment
+        run: >-
+          python src/ofat_experiments.py
+          --mutation-rate ${{ matrix.mutation }}
+          --seed ${{ matrix.seed }}
+          --output ofat_test_2/mutation_${{ matrix.mutation }}_seed_${{ matrix.seed }}.csv
+
+      - name: Upload individual result
+        uses: actions/upload-artifact@v4
+        with:
+          name: ofat-test-2-mutation${{ matrix.mutation }}-seed${{ matrix.seed }}
+          path: ofat_test_2/mutation_${{ matrix.mutation }}_seed_${{ matrix.seed }}.csv
+          retention-days: 30
+
+  collect-results:
+    name: Create OFAT Test 2 Excel
+    runs-on: ubuntu-latest
+    needs: mutation-runs
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all individual results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: ofat-test-2-*
+          path: ofat_test_2_downloads
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build Excel report
+        run: >-
+          python src/ofat_experiments.py
+          --aggregate-mutation-results ofat_test_2_downloads
+          --output-xlsx OFAT_Test_2_Mutation_Rate.xlsx
+
+      - name: Upload final Excel report
+        uses: actions/upload-artifact@v4
+        with:
+          name: OFAT-Test-2-Mutation-Rate-Excel
+          path: OFAT_Test_2_Mutation_Rate.xlsx
+          retention-days: 30

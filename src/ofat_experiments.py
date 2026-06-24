@@ -296,6 +296,58 @@ def run_population_seed(population_size, seed, output_path):
     )
 
 
+def run_mutation_seed(mutation_rate, seed, output_path):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    start_time = time.perf_counter()
+    _, metrics, actual_generations = run_genetic_algorithm(
+        instance,
+        population_size=150,
+        generations=MAX_GENERATIONS,
+        mutation_rate=mutation_rate,
+        elite_size=5,
+        tournament_size=3,
+        stagnation_k=20,
+        seed=seed,
+        verbose=False,
+    )
+    elapsed = time.perf_counter() - start_time
+
+    row = {
+        "objective_version": OBJECTIVE_VERSION,
+        "instance": INSTANCE_FILE.name,
+        "population_size": 150,
+        "mutation_rate": mutation_rate,
+        "stagnation_k": 20,
+        "elite_size": 5,
+        "tournament_size": 3,
+        "max_generations": MAX_GENERATIONS,
+        "seed": seed,
+        "fitness": metrics["normalised_fitness"],
+        "generations": actual_generations,
+        "elapsed_s": elapsed,
+        "postponed_orders": metrics.get("postponed_orders", 0),
+        "postponed_boxes": metrics.get("postponed_boxes", 0),
+        "delay_days": metrics.get("delay_days_total", 0),
+        "setup_time_min": metrics.get("setup_total_min", 0),
+        "economic_value": metrics.get("scheduled_economic_value", 0),
+        "capacity_utilisation": metrics.get("capacity_utilisation_ratio", 0),
+        "operator_minutes": metrics.get("operator_usage_minutes", 0),
+    }
+
+    with output_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=row.keys())
+        writer.writeheader()
+        writer.writerow(row)
+
+    print(
+        f"Saved {output_path} | mutation={mutation_rate} | "
+        f"seed={seed} | fitness={row['fitness']:.8f}",
+        flush=True,
+    )
+
+
 def aggregate_population_results(input_dir, output_xlsx):
     input_dir = Path(input_dir)
     result_files = sorted(input_dir.rglob("population_*_seed_*.csv"))
@@ -375,6 +427,89 @@ def aggregate_population_results(input_dir, output_xlsx):
     print(f"Best population size: {best_population}", flush=True)
 
 
+def aggregate_mutation_results(input_dir, output_xlsx):
+    input_dir = Path(input_dir)
+    result_files = sorted(input_dir.rglob("mutation_*_seed_*.csv"))
+
+    if not result_files:
+        raise FileNotFoundError(
+            f"No mutation result CSV files found under {input_dir}."
+        )
+
+    individual = pd.concat(
+        [pd.read_csv(path) for path in result_files],
+        ignore_index=True,
+    )
+    individual = individual.sort_values(
+        ["mutation_rate", "seed"],
+    ).reset_index(drop=True)
+
+    summary = (
+        individual.groupby("mutation_rate", as_index=False)
+        .agg(
+            mean_fitness=("fitness", "mean"),
+            std_fitness=("fitness", "std"),
+            best_fitness=("fitness", "min"),
+            mean_generations=("generations", "mean"),
+            mean_time_s=("elapsed_s", "mean"),
+            mean_postponed_orders=("postponed_orders", "mean"),
+            mean_postponed_boxes=("postponed_boxes", "mean"),
+            mean_delay_days=("delay_days", "mean"),
+            mean_setup_time_min=("setup_time_min", "mean"),
+            mean_economic_value=("economic_value", "mean"),
+            mean_capacity_utilisation=("capacity_utilisation", "mean"),
+            mean_operator_minutes=("operator_minutes", "mean"),
+        )
+        .sort_values("mutation_rate")
+        .reset_index(drop=True)
+    )
+    best_mutation = float(
+        summary.loc[summary["mean_fitness"].idxmin(), "mutation_rate"]
+    )
+    summary["best_mutation"] = ""
+    summary.loc[
+        summary["mutation_rate"] == best_mutation,
+        "best_mutation",
+    ] = "BEST"
+
+    configuration = pd.DataFrame(
+        [
+            {
+                "parameter": "Mutation rates",
+                "value": "0.01, 0.03, 0.05, 0.08, 0.10, 0.15",
+            },
+            {"parameter": "Population size", "value": 150},
+            {"parameter": "Stagnation k", "value": 20},
+            {"parameter": "Seeds", "value": "0, 7, 13, 42, 99"},
+            {"parameter": "Elite size", "value": 5},
+            {"parameter": "Tournament size", "value": 3},
+            {"parameter": "Maximum generations", "value": MAX_GENERATIONS},
+            {"parameter": "Productive minutes per line/day", "value": 450},
+            {"parameter": "Objective version", "value": OBJECTIVE_VERSION},
+            {"parameter": "Best mutation rate", "value": best_mutation},
+        ]
+    )
+
+    output_xlsx = Path(output_xlsx)
+    output_xlsx.parent.mkdir(parents=True, exist_ok=True)
+
+    with pd.ExcelWriter(output_xlsx, engine="openpyxl") as writer:
+        individual.to_excel(
+            writer,
+            sheet_name="Individual Results",
+            index=False,
+        )
+        summary.to_excel(writer, sheet_name="Summary", index=False)
+        configuration.to_excel(
+            writer,
+            sheet_name="Configuration",
+            index=False,
+        )
+
+    print(f"Created Excel report: {output_xlsx}", flush=True)
+    print(f"Best mutation rate: {best_mutation}", flush=True)
+
+
 def main():
     print("\n" + "=" * 50)
     print("EXPERIMENT 1 - POPULATION SIZE")
@@ -438,20 +573,39 @@ def main():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--population-size", type=int)
+    parser.add_argument("--mutation-rate", type=float)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--output")
     parser.add_argument("--aggregate-population-results")
+    parser.add_argument("--aggregate-mutation-results")
     parser.add_argument("--output-xlsx")
     args = parser.parse_args()
 
-    if args.aggregate_population_results:
+    if args.aggregate_mutation_results:
+        if not args.output_xlsx:
+            parser.error("--output-xlsx is required when aggregating results.")
+        aggregate_mutation_results(
+            args.aggregate_mutation_results,
+            args.output_xlsx,
+        )
+    elif args.aggregate_population_results:
         if not args.output_xlsx:
             parser.error("--output-xlsx is required when aggregating results.")
         aggregate_population_results(
             args.aggregate_population_results,
             args.output_xlsx,
         )
-    elif args.population_size is not None or args.seed is not None:
+    elif args.mutation_rate is not None:
+        if args.seed is None or not args.output:
+            parser.error(
+                "--mutation-rate, --seed and --output must be used together."
+            )
+        run_mutation_seed(
+            args.mutation_rate,
+            args.seed,
+            args.output,
+        )
+    elif args.population_size is not None:
         if args.population_size is None or args.seed is None or not args.output:
             parser.error(
                 "--population-size, --seed and --output must be used together."
@@ -460,6 +614,11 @@ if __name__ == "__main__":
             args.population_size,
             args.seed,
             args.output,
+        )
+    elif args.seed is not None or args.output:
+        parser.error(
+            "--seed and --output require either --population-size "
+            "or --mutation-rate."
         )
     else:
         main()
