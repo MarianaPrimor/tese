@@ -201,13 +201,9 @@ def normalised_fitness_breakdown(metrics, max_values, weights=None):
         metrics.get("scheduled_economic_value", 0),
         max_values["economic_value"],
     )
-    occupied_capacity_time = (
-        sum(metrics.get("production_time_by_day_line", {}).values())
-        + sum(metrics.get("setup_time_by_day_line", {}).values())
-    )
     capacity_ratio = _normalised_ratio(
-        occupied_capacity_time,
-        max_values["capacity_time"],
+        metrics.get("capacity_utilisation_ratio", 0),
+        1,
     )
     operator_ratio = _normalised_ratio(
         metrics.get("operator_usage_minutes", 0),
@@ -899,6 +895,25 @@ def evaluate_solution(solution, instance):
         infeasible_solution = True
 
     operator_usage_minutes = exact_operator_usage["operator_usage_minutes"]
+    capacity_utilisation_values = []
+
+    for day in range(1, instance["n_days"] + 1):
+        available_line_time = get_available_line_time_for_day(instance, day)
+
+        if available_line_time <= 0:
+            continue
+
+        for line in instance["final_lines"]:
+            production_time = production_time_by_day_line.get((day, line), 0)
+            capacity_utilisation_values.append(
+                min(1.0, production_time / available_line_time)
+            )
+
+    capacity_utilisation_ratio = (
+        sum(capacity_utilisation_values) / len(capacity_utilisation_values)
+        if capacity_utilisation_values
+        else 0
+    )
 
     metrics = {
         "invalid_assignments": invalid_assignments,
@@ -931,6 +946,7 @@ def evaluate_solution(solution, instance):
         "operator_usage_intervals": exact_operator_usage["intervals"],
         "peak_operators": peak_operators,
         "operator_usage_minutes": operator_usage_minutes,
+        "capacity_utilisation_ratio": capacity_utilisation_ratio,
         "scheduled_kg": scheduled_kg,
         "postponed_kg": postponed_kg,
         "scheduled_economic_value": scheduled_economic_value,
