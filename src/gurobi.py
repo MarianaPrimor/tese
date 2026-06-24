@@ -24,6 +24,7 @@ from evaluator import (
     ECONOMIC_VALUE_NORMALIZED_WEIGHT,
     DELAY_NORMALIZED_WEIGHT,
     SETUP_NORMALIZED_WEIGHT,
+    CAPACITY_UTILIZATION_NORMALIZED_WEIGHT,
     OPERATOR_UTILIZATION_NORMALIZED_WEIGHT,
     FINISHING_DELAY_L1_MIN,
 )
@@ -613,6 +614,8 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
                         )
 
     setup_expr = gp.LinExpr()
+    capacity_utilisation_expr = gp.LinExpr()
+    capacity_slots = len(lines) * len(days)
 
     for l in lines:
         for d in days:
@@ -651,15 +654,36 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
                         setup_terms.append(term)
                         setup_expr += term
 
+            production_expr = gp.quicksum(production_terms)
+            available_capacity = get_available_line_time_for_day(instance, d)
+
             model.addConstr(
-                gp.quicksum(production_terms)
+                production_expr
                 + gp.quicksum(setup_terms)
                 <= (
-                    get_available_line_time_for_day(instance, d)
+                    available_capacity
                     + get_capacity_tolerance_for_day(instance, d)
                 ),
                 name=f"capacity_{l}_{d}"
             )
+
+            capacity_used = model.addVar(
+                lb=0,
+                ub=available_capacity,
+                vtype=GRB.CONTINUOUS,
+                name=f"capacity_used_{l}_{d}",
+            )
+            model.addConstr(
+                capacity_used <= production_expr,
+                name=f"capacity_used_link_{l}_{d}",
+            )
+
+            if available_capacity > 0 and capacity_slots > 0:
+                capacity_utilisation_expr += (
+                    capacity_used
+                    / available_capacity
+                    / capacity_slots
+                )
 
     postponed_volume_expr = gp.LinExpr()
     scheduled_economic_value_expr = gp.LinExpr()
@@ -756,6 +780,8 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
         - ECONOMIC_VALUE_NORMALIZED_WEIGHT
         * scheduled_economic_value_expr
         / max_values["economic_value"]
+        - CAPACITY_UTILIZATION_NORMALIZED_WEIGHT
+        * capacity_utilisation_expr
         - OPERATOR_UTILIZATION_NORMALIZED_WEIGHT
         * operator_usage_expr
         / max_values["operator_minutes"]
@@ -861,6 +887,10 @@ def solve_with_gurobi(instance, time_limit=1800, verbose=True):
     print(f"Delay contribution: {breakdown['delay']:+.6f}")
     print(f"Setup contribution: {breakdown['setup']:+.6f}")
     print(f"Economic value contribution: {breakdown['economic_value']:+.6f}")
+    print(
+        "Capacity utilisation contribution: "
+        f"{breakdown['capacity_utilisation']:+.6f}"
+    )
     print(
         "Operator utilisation contribution: "
         f"{breakdown['operator_utilisation']:+.6f}"
