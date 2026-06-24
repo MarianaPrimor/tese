@@ -34,13 +34,16 @@ RESULTS_DIR = OUTPUT_DIR / "results"
 PLOTS_DIR = OUTPUT_DIR / "plots"
 
 GA_PARAMETERS = {
-    "population_size": 200,
+    "population_size": 162,
     "generations": 200,
-    "mutation_rate": 0.10,
+    "mutation_rate": 0.07463622448274694,
     "elite_size": 5,
     "tournament_size": 3,
-    "stagnation_k": 20,
+    "stagnation_k": 24,
 }
+
+OPTUNA_BEST_TRIAL = 32
+OPTUNA_BEST_FITNESS = -0.35901551658187786
 
 METRIC_LABELS = {
     "postponed_orders": "Postponed orders",
@@ -1248,7 +1251,7 @@ def run_axis_3(excel_path, max_workers, weight_index=None):
 def merge_axis_3_weight_csvs():
     frames = []
 
-    for weight_index in range(5):
+    for weight_index in range(6):
         path = RESULTS_DIR / f"axis_3_weight_{weight_index}.csv"
 
         if not path.exists():
@@ -1315,7 +1318,7 @@ def parse_args():
         "--weight-index",
         type=int,
         default=None,
-        choices=[0, 1, 2, 3, 4],
+        choices=[0, 1, 2, 3, 4, 5],
         help="Run only this weight index for axis 3. Saves to axis_3_weight_N.csv.",
     )
     parser.add_argument(
@@ -1349,7 +1352,7 @@ def parse_args():
         default=None,
         help="Planning horizon end date (YYYY-MM-DD). Defaults to the last day of the demand month.",
     )
-    parser.add_argument("--operators", type=int, default=20)
+    parser.add_argument("--operators", type=int, default=18)
     parser.add_argument("--shifts", type=int, choices=[1, 2], default=1)
     parser.add_argument("--shift-start", default="08:00")
     parser.add_argument("--shift-end", default="16:30")
