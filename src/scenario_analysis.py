@@ -1047,13 +1047,27 @@ def plot_axis_3_metric_panels(weight_name, weight_df):
     panel_metrics = [
         ("fulfillment_rate", "Fulfilment Rate (%)", 100),
         ("postponed_orders", "Postponed Orders", 1),
-        ("delay_days_total", "Total Delay (days)", 1),
-        ("capacity_utilisation", "Capacity Utilisation (%)", 100),
         ("total_setup_time", "Total Setup Time (min)", 1),
         ("euros_produced", "Revenue Produced (€)", 1),
     ]
+    optional_metrics = [
+        ("delay_days_total", "Total Delay (days)", 1),
+        ("capacity_utilisation", "Capacity Utilisation (%)", 100),
+    ]
+    panel_metrics.extend(
+        metric
+        for metric in optional_metrics
+        if metric[0] in weight_df.columns
+    )
     label = WEIGHT_LABELS.get(weight_name, weight_name)
-    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+    n_columns = 3 if len(panel_metrics) > 4 else 4
+    n_rows = math.ceil(len(panel_metrics) / n_columns)
+    fig, axes = plt.subplots(
+        n_rows,
+        n_columns,
+        figsize=(5.2 * n_columns, 4.5 * n_rows),
+        squeeze=False,
+    )
 
     for ax, (metric, y_label, scale) in zip(axes.flat, panel_metrics):
         summary = aggregate_by(weight_df, "weight_value", [metric])
@@ -1079,6 +1093,9 @@ def plot_axis_3_metric_panels(weight_name, weight_df):
         ax.set_xlabel("Weight value")
         ax.set_ylabel(y_label)
         ax.grid(True, alpha=0.25)
+
+    for ax in axes.flat[len(panel_metrics):]:
+        ax.set_visible(False)
 
     fig.suptitle(
         f"Axis 3 — Sensitivity to weight — {label}",
