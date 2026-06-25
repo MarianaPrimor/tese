@@ -241,6 +241,11 @@ def extract_common_metrics(metrics, instance):
         "kilos": metrics.get("scheduled_kg", 0),
         "total_setup_time": metrics.get("setup_total_min", 0),
         "operators_used": metrics.get("operator_usage_minutes", 0),
+        "delay_days_total": metrics.get("delay_days_total", 0),
+        "capacity_utilisation": metrics.get(
+            "capacity_utilisation_ratio",
+            0,
+        ),
         "computation_time_sec": metrics.get("computation_time_sec", 0),
         "actual_generations": metrics.get("actual_generations", 0),
     }
@@ -1042,13 +1047,15 @@ def plot_axis_3_metric_panels(weight_name, weight_df):
     panel_metrics = [
         ("fulfillment_rate", "Fulfilment Rate (%)", 100),
         ("postponed_orders", "Postponed Orders", 1),
+        ("delay_days_total", "Total Delay (days)", 1),
+        ("capacity_utilisation", "Capacity Utilisation (%)", 100),
         ("total_setup_time", "Total Setup Time (min)", 1),
         ("euros_produced", "Revenue Produced (€)", 1),
     ]
     label = WEIGHT_LABELS.get(weight_name, weight_name)
-    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
 
-    for ax, (metric, y_label, scale) in zip(axes, panel_metrics):
+    for ax, (metric, y_label, scale) in zip(axes.flat, panel_metrics):
         summary = aggregate_by(weight_df, "weight_value", [metric])
         x = summary["weight_value"]
         mean = summary[f"{metric}_mean"] * scale
@@ -1288,6 +1295,8 @@ def run_axis_3(excel_path, max_workers, weight_index=None):
                 "euros_produced",
                 "total_setup_time",
                 "operators_used",
+                "delay_days_total",
+                "capacity_utilisation",
                 "kilos",
             ],
         )
