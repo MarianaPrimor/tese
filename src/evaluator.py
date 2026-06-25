@@ -237,7 +237,7 @@ def normalised_fitness(metrics, max_values, weights=None):
 # RANDOM SOLUTION GENERATION
 # ============================================================
 
-def generate_random_solution(instance, seed=42, postponement_rate=0.15):
+def generate_random_solution(instance, seed=42):
     random.seed(seed)
 
     refs_by_id = create_refs_by_id(instance)
@@ -261,18 +261,14 @@ def generate_random_solution(instance, seed=42, postponement_rate=0.15):
         valid_lines = valid_lines_for_ref(ref)
         valid_days = get_valid_days_for_ref(instance, ref)
 
-        postponed = bool(valid_lines) and bool(valid_days) and random.random() < postponement_rate
-
-        if postponed:
-            line = None
-            day = None
-        elif not valid_lines or not valid_days:
+        if not valid_lines or not valid_days:
             line = None
             day = None
             postponed = True
         else:
             line = valid_lines[0]
             day = random.choice(valid_days)
+            postponed = False
 
         solution.append({
             "order_id": order_index,
