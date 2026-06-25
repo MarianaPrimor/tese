@@ -1038,6 +1038,52 @@ def baseline_metric_means(df):
     }
 
 
+def plot_axis_3_metric_panels(weight_name, weight_df):
+    panel_metrics = [
+        ("fulfillment_rate", "Fulfilment Rate (%)", 100),
+        ("postponed_orders", "Postponed Orders", 1),
+        ("total_setup_time", "Total Setup Time (min)", 1),
+        ("euros_produced", "Revenue Produced (€)", 1),
+    ]
+    label = WEIGHT_LABELS.get(weight_name, weight_name)
+    fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+
+    for ax, (metric, y_label, scale) in zip(axes, panel_metrics):
+        summary = aggregate_by(weight_df, "weight_value", [metric])
+        x = summary["weight_value"]
+        mean = summary[f"{metric}_mean"] * scale
+        std = summary[f"{metric}_std"].fillna(0) * scale
+
+        ax.plot(
+            x,
+            mean,
+            marker="o",
+            linewidth=1.7,
+            color="#0879bd",
+        )
+        ax.fill_between(
+            x,
+            mean - std,
+            mean + std,
+            color="#0879bd",
+            alpha=0.18,
+            linewidth=0,
+        )
+        ax.set_xlabel("Weight value")
+        ax.set_ylabel(y_label)
+        ax.grid(True, alpha=0.25)
+
+    fig.suptitle(
+        f"Axis 3 — Sensitivity to weight — {label}",
+        fontweight="bold",
+    )
+    fig.tight_layout()
+    path = PLOTS_DIR / f"axis_3_weight_panels_{weight_name}.png"
+    fig.savefig(path, dpi=300)
+    plt.close(fig)
+    return path
+
+
 def plot_axis_3(csv_path):
     df = pd.read_csv(csv_path)
     created = []
@@ -1115,6 +1161,9 @@ def plot_axis_3(csv_path):
         plt.savefig(path, dpi=300)
         plt.close()
         created.append(path)
+        created.append(
+            plot_axis_3_metric_panels(weight_name, weight_df)
+        )
 
     return created
 
