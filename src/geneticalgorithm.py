@@ -482,13 +482,18 @@ def repair_operator_constraints(solution, instance, max_values, weights):
 def reinsert_postponed_orders(solution, instance, max_values, weights):
     refs_by_id = create_refs_by_id(instance)
     repaired_solution = deepcopy(solution)
+    current_score = normalised_fitness(
+        evaluate_solution(repaired_solution, instance),
+        max_values,
+        weights=weights,
+    )
 
     inserted = True
 
     while inserted:
         inserted = False
         best_candidate = None
-        best_score = float("inf")
+        best_score = current_score
 
         postponed_genes = sorted(
             (
@@ -536,6 +541,7 @@ def reinsert_postponed_orders(solution, instance, max_values, weights):
 
         if best_candidate is not None:
             repaired_solution = best_candidate
+            current_score = best_score
             inserted = True
 
     return repaired_solution
