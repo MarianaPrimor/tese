@@ -1,0 +1,165 @@
+name: Final July Scenario Tests
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-1-demand-scaling:
+    name: "Test 1 - Demand scaling"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Test 1
+        run: >
+          python src/final_july_tests.py
+          --test 1
+          --instance-file Inputs_July.xlsx
+          --output-dir src/outputs/final_july_tests
+
+      - name: Upload Test 1 results
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-july-test-1-demand-scaling
+          path: |
+            src/outputs/final_july_tests/test_1_demand_scaling_raw.csv
+            src/outputs/final_july_tests/test_1_demand_scaling_summary.csv
+
+  test-2-operator-availability:
+    name: "Test 2 - Operator availability"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Test 2
+        run: >
+          python src/final_july_tests.py
+          --test 2
+          --instance-file Inputs_July.xlsx
+          --output-dir src/outputs/final_july_tests
+
+      - name: Upload Test 2 results
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-july-test-2-operator-availability
+          path: |
+            src/outputs/final_july_tests/test_2_operator_availability_raw.csv
+            src/outputs/final_july_tests/test_2_operator_availability_summary.csv
+
+  test-3-weight-sensitivity:
+    name: "Test 3 - Weight ${{ matrix.weight_index }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        weight_index: [0, 1, 2, 3, 4, 5]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Test 3 weight subset
+        run: >
+          python src/final_july_tests.py
+          --test 3
+          --weight-index ${{ matrix.weight_index }}
+          --instance-file Inputs_July.xlsx
+          --output-dir src/outputs/final_july_tests
+
+      - name: Upload Test 3 weight results
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-july-test-3-weight-${{ matrix.weight_index }}
+          path: |
+            src/outputs/final_july_tests/test_3_weight_sensitivity_raw_weight_${{ matrix.weight_index }}.csv
+            src/outputs/final_july_tests/test_3_weight_sensitivity_summary_weight_${{ matrix.weight_index }}.csv
+
+  test-4-shift-structure:
+    name: "Test 4 - Shift structure"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Test 4
+        run: >
+          python src/final_july_tests.py
+          --test 4
+          --instance-file Inputs_July.xlsx
+          --output-dir src/outputs/final_july_tests
+
+      - name: Upload Test 4 results
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-july-test-4-shift-structure
+          path: |
+            src/outputs/final_july_tests/test_4_shift_structure_raw.csv
+            src/outputs/final_july_tests/test_4_shift_structure_summary.csv
+            src/outputs/final_july_tests/test_4_shift_structure_per_day_shift_utilisation.csv
+
+  collect-results:
+    name: "Collect final July test CSVs"
+    needs:
+      - test-1-demand-scaling
+      - test-2-operator-availability
+      - test-3-weight-sensitivity
+      - test-4-shift-structure
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: final_july_tests_artifacts
+
+      - name: Reorganize CSVs
+        run: |
+          mkdir -p final_july_tests_final
+          find final_july_tests_artifacts -name "*.csv" -exec cp {} final_july_tests_final/ \;
+
+      - name: Upload combined CSV package
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-july-tests-all-csvs
+          path: final_july_tests_final/
