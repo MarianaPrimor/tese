@@ -1,7 +1,7 @@
-﻿import csv
+import argparse
+import csv
 import json
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import optuna
@@ -12,18 +12,11 @@ from geneticalgorithm import run_genetic_algorithm
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-INSTANCE_FILE = (SCRIPT_DIR / "../Inputs_EmpresaX.xlsx").resolve()
+DEFAULT_INSTANCE_FILE = (SCRIPT_DIR / "../Inputs_June.xlsx").resolve()
 N_TRIALS = 50
 MAX_GENERATIONS = 200
 SEEDS_FOR_GA = [42]
-STUDY_NAME = "ga_parameter_tuning_normalised_v3_single_seed"
-STORAGE_FILE = SCRIPT_DIR / "optuna_study_normalised_v3_single_seed.db"
-STORAGE_PATH = f"sqlite:///{STORAGE_FILE.as_posix()}"
-RESULTS_FILE = SCRIPT_DIR / "optuna_results_normalised_v3_single_seed.csv"
-SEED_CACHE_FILE = SCRIPT_DIR / "optuna_seed_checkpoint_normalised_v3_single_seed.csv"
-CONFIG_FILE = SCRIPT_DIR / "optuna_configuration_normalised_v3_single_seed.json"
-FIGURES_DIR = SCRIPT_DIR / "optuna_figures_normalised_v3_single_seed"
-OBJECTIVE_VERSION = "normalised_v3_capacity_utilisation"
+OBJECTIVE_VERSION = "normalised_v3_single_instance_literature_ranges"
 
 SEED_CACHE_FIELDS = [
     "objective_version",
@@ -37,20 +30,76 @@ SEED_CACHE_FIELDS = [
     "elapsed_s",
 ]
 
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Tune GA parameters with Optuna for one planning instance."
+    )
+    parser.add_argument(
+        "--instance-file",
+        type=Path,
+        default=DEFAULT_INSTANCE_FILE,
+        help="Excel input file to tune against.",
+    )
+    parser.add_argument(
+        "--study-suffix",
+        default="june",
+        help="Suffix used to keep study/result files separate.",
+    )
+    parser.add_argument(
+        "--operators",
+        type=int,
+        default=20,
+        help="Number of productive operators available per day.",
+    )
+    parser.add_argument(
+        "--non-working-dates",
+        default="",
+        help=(
+            "Comma-separated non-working dates in YYYY-MM-DD format, "
+            "in addition to weekends and the Excel holidays sheet."
+        ),
+    )
+    return parser.parse_args()
+
+
+ARGS = parse_args()
+INSTANCE_FILE = ARGS.instance_file.resolve()
+STUDY_SUFFIX = ARGS.study_suffix.strip().lower().replace(" ", "_")
+NON_WORKING_DATES = [
+    value.strip()
+    for value in ARGS.non_working_dates.split(",")
+    if value.strip()
+]
+OPERATIONAL_CONFIG = {
+    "shift_start_min": 480,
+    "shift_end_min": 990,
+    "lunch_break_min": 30,
+    "cleaning_time_min": 30,
+    "standard_operators": ARGS.operators,
+    "non_working_dates": NON_WORKING_DATES,
+}
+STUDY_NAME = f"ga_parameter_tuning_{STUDY_SUFFIX}_v1"
+STORAGE_FILE = SCRIPT_DIR / f"optuna_study_{STUDY_SUFFIX}_v1.db"
+STORAGE_PATH = f"sqlite:///{STORAGE_FILE.as_posix()}"
+RESULTS_FILE = SCRIPT_DIR / f"optuna_results_{STUDY_SUFFIX}_v1.csv"
+SEED_CACHE_FILE = SCRIPT_DIR / f"optuna_seed_checkpoint_{STUDY_SUFFIX}_v1.csv"
+CONFIG_FILE = SCRIPT_DIR / f"optuna_configuration_{STUDY_SUFFIX}_v1.json"
+FIGURES_DIR = SCRIPT_DIR / f"optuna_figures_{STUDY_SUFFIX}_v1"
+
 instance = load_real_instance(
     str(INSTANCE_FILE),
-    operational_config={
-        "shift_start_min": 480,
-        "shift_end_min": 990,
-        "lunch_break_min": 30,
-        "cleaning_time_min": 30,
-    },
+    operational_config=OPERATIONAL_CONFIG,
 )
 
 
 def instance_signature():
     stat = INSTANCE_FILE.stat()
-    return f"{INSTANCE_FILE.name}:{stat.st_size}:{stat.st_mtime_ns}"
+    return (
+        f"{INSTANCE_FILE.name}:{stat.st_size}:{stat.st_mtime_ns}:"
+        f"operators={ARGS.operators}:"
+        f"non_working_dates={','.join(NON_WORKING_DATES)}"
+    )
 
 
 INSTANCE_SIGNATURE = instance_signature()
@@ -136,11 +185,10 @@ def run_seed_evaluation(
 
 
 def objective(trial):
-    population_size = trial.suggest_int("population_size", 150, 200)
-    mutation_rate = trial.suggest_float("mutation_rate", 0.05, 0.10)
-    stagnation_k = trial.suggest_int("stagnation_k", 20, 60)
+    population_size = trial.suggest_int("population_size", 50, 250)
+    mutation_rate = trial.suggest_float("mutation_rate", 0.01, 0.15)
+    stagnation_k = trial.suggest_int("stagnation_k", 10, 60)
     fitness_by_seed = {}
-    missing_seeds = []
 
     for seed in SEEDS_FOR_GA:
         key = cache_key(
@@ -159,59 +207,37 @@ def objective(trial):
                 flush=True,
             )
             fitness_by_seed[seed] = fitness
-        else:
-            missing_seeds.append(seed)
+            continue
 
-    if missing_seeds:
+        result = run_seed_evaluation(
+            instance,
+            population_size,
+            mutation_rate,
+            stagnation_k,
+            seed,
+        )
+        fitness = result["fitness"]
+        generations = result["generations"]
+        elapsed = result["elapsed_s"]
+        fitness_by_seed[seed] = fitness
+        seed_cache[key] = {
+            "objective_version": OBJECTIVE_VERSION,
+            "instance_signature": INSTANCE_SIGNATURE,
+            "population_size": population_size,
+            "mutation_rate": mutation_rate,
+            "stagnation_k": stagnation_k,
+            "seed": seed,
+            "fitness": f"{fitness:.12f}",
+            "generations": generations,
+            "elapsed_s": f"{elapsed:.3f}",
+        }
+        save_seed_cache()
         print(
-            f"Trial {trial.number}: running seeds {missing_seeds} in parallel",
+            f"Trial {trial.number} seed {seed}: "
+            f"fitness={fitness:.8f} | generations={generations} | "
+            f"time={elapsed:.1f}s",
             flush=True,
         )
-        with ProcessPoolExecutor(max_workers=len(missing_seeds)) as executor:
-            futures = {
-                executor.submit(
-                    run_seed_evaluation,
-                    instance,
-                    population_size,
-                    mutation_rate,
-                    stagnation_k,
-                    seed,
-                ): seed
-                for seed in missing_seeds
-            }
-
-            for future in as_completed(futures):
-                seed = futures[future]
-                result = future.result()
-                fitness = result["fitness"]
-                generations = result["generations"]
-                elapsed = result["elapsed_s"]
-                fitness_by_seed[seed] = fitness
-
-                key = cache_key(
-                    population_size,
-                    mutation_rate,
-                    stagnation_k,
-                    seed,
-                )
-                seed_cache[key] = {
-                    "objective_version": OBJECTIVE_VERSION,
-                    "instance_signature": INSTANCE_SIGNATURE,
-                    "population_size": population_size,
-                    "mutation_rate": mutation_rate,
-                    "stagnation_k": stagnation_k,
-                    "seed": seed,
-                    "fitness": f"{fitness:.12f}",
-                    "generations": generations,
-                    "elapsed_s": f"{elapsed:.3f}",
-                }
-                save_seed_cache()
-                print(
-                    f"Trial {trial.number} seed {seed}: "
-                    f"fitness={fitness:.8f} | generations={generations} | "
-                    f"time={elapsed:.1f}s",
-                    flush=True,
-                )
 
     fitnesses = [fitness_by_seed[seed] for seed in SEEDS_FOR_GA]
 
@@ -273,10 +299,12 @@ def save_configuration():
         "n_completed_trials_target": N_TRIALS,
         "max_generations": MAX_GENERATIONS,
         "productive_minutes_per_line_day": 450,
+        "operators": ARGS.operators,
+        "non_working_dates": NON_WORKING_DATES,
         "seeds": SEEDS_FOR_GA,
-        "population_size": [150, 200],
-        "mutation_rate": [0.05, 0.10],
-        "stagnation_k": [20, 60],
+        "population_size": [50, 250],
+        "mutation_rate": [0.01, 0.15],
+        "stagnation_k": [10, 60],
         "elite_size": 5,
         "tournament_size": 3,
     }
@@ -306,6 +334,10 @@ def main():
     ]
     remaining_trials = max(0, N_TRIALS - len(completed_trials))
 
+    print(f"Instance file: {INSTANCE_FILE}")
+    print(f"Study suffix: {STUDY_SUFFIX}")
+    print(f"Operators: {ARGS.operators}")
+    print(f"Non-working dates: {NON_WORKING_DATES}")
     print(f"Completed trials already stored: {len(completed_trials)}")
     print(f"Remaining completed trials required: {remaining_trials}")
 
@@ -333,15 +365,6 @@ def main():
 
     print(f"\nStudy saved to {STORAGE_FILE}")
     print(f"Seed checkpoints saved to {SEED_CACHE_FILE}")
-
-    try:
-        from generate_optuna_figures import main as generate_figures
-
-        generate_figures()
-    except Exception as exc:
-        print(f"Automatic figure generation failed: {exc}")
-        print("The study is safe. Regenerate figures later with:")
-        print("  python generate_optuna_figures.py")
 
 
 if __name__ == "__main__":

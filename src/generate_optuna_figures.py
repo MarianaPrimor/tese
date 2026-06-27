@@ -1,24 +1,44 @@
+import argparse
 from pathlib import Path
 
 import optuna
+import pandas as pd
+import plotly.express as px
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-STUDY_NAME = "ga_parameter_tuning_normalised_v3_single_seed"
-STORAGE_FILE = SCRIPT_DIR / "optuna_study_normalised_v3_single_seed.db"
-STORAGE_PATH = f"sqlite:///{STORAGE_FILE.as_posix()}"
-FIGURES_DIR = SCRIPT_DIR / "optuna_figures_normalised_v3_single_seed"
 
 
-def save_figure(name, factory):
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Generate Optuna diagnostic figures for one study."
+    )
+    parser.add_argument(
+        "--study-suffix",
+        default="june",
+        help="Suffix used by optuna_test.py, e.g. june, july, august.",
+    )
+    return parser.parse_args()
+
+
+def paths_for_suffix(study_suffix):
+    suffix = study_suffix.strip().lower().replace(" ", "_")
+    study_name = f"ga_parameter_tuning_{suffix}_v1"
+    storage_file = SCRIPT_DIR / f"optuna_study_{suffix}_v1.db"
+    storage_path = f"sqlite:///{storage_file.as_posix()}"
+    figures_dir = SCRIPT_DIR / f"optuna_figures_{suffix}_v1"
+    return suffix, study_name, storage_file, storage_path, figures_dir
+
+
+def save_figure(figures_dir, name, factory):
     try:
         figure = factory()
-        html_path = FIGURES_DIR / f"{name}.html"
+        html_path = figures_dir / f"{name}.html"
         figure.write_html(html_path)
         print(f"Saved HTML: {html_path.name}")
 
         try:
-            png_path = FIGURES_DIR / f"{name}.png"
+            png_path = figures_dir / f"{name}.png"
             figure.write_image(png_path)
             print(f"Saved PNG:  {png_path.name}")
         except Exception as exc:
@@ -46,15 +66,58 @@ def parameter_importance_figure(study):
         )
 
 
+def correlation_figure(study):
+    records = []
+
+    for trial in study.trials:
+        if trial.state != optuna.trial.TrialState.COMPLETE:
+            continue
+
+        row = {"fitness": trial.value}
+        row.update(trial.params)
+        records.append(row)
+
+    if len(records) < 2:
+        raise RuntimeError("At least two completed trials are required.")
+
+    df = pd.DataFrame(records)
+    columns = [
+        column
+        for column in [
+            "fitness",
+            "population_size",
+            "mutation_rate",
+            "stagnation_k",
+        ]
+        if column in df.columns
+    ]
+    corr = df[columns].corr(numeric_only=True)
+    fig = px.imshow(
+        corr,
+        text_auto=".2f",
+        color_continuous_scale="RdBu_r",
+        zmin=-1,
+        zmax=1,
+        title="Correlation matrix between Optuna parameters and fitness",
+    )
+    fig.update_layout(width=850, height=700)
+    return fig
+
+
 def main():
-    if not STORAGE_FILE.exists():
+    args = parse_args()
+    suffix, study_name, storage_file, storage_path, figures_dir = paths_for_suffix(
+        args.study_suffix
+    )
+
+    if not storage_file.exists():
         raise FileNotFoundError(
-            f"Study database not found: {STORAGE_FILE}"
+            f"Study database not found: {storage_file}"
         )
 
     study = optuna.load_study(
-        study_name=STUDY_NAME,
-        storage=STORAGE_PATH,
+        study_name=study_name,
+        storage=storage_path,
     )
     completed = [
         trial
@@ -65,57 +128,64 @@ def main():
     if not completed:
         raise RuntimeError("The study has no completed trials yet.")
 
-    FIGURES_DIR.mkdir(exist_ok=True)
+    figures_dir.mkdir(exist_ok=True)
     figures = [
         (
             "01_optimization_history",
             lambda: optuna.visualization.plot_optimization_history(study),
         ),
         (
-            "02_parameter_importance",
+            "02_anova_parameter_importance",
             lambda: parameter_importance_figure(study),
         ),
         (
-            "03_contour_all_parameters",
+            "03_parameter_correlation_matrix",
+            lambda: correlation_figure(study),
+        ),
+        (
+            "04_contour_all_parameters",
             lambda: optuna.visualization.plot_contour(study),
         ),
         (
-            "04_contour_population_stagnation",
+            "05_contour_population_stagnation",
             lambda: optuna.visualization.plot_contour(
                 study,
                 params=["population_size", "stagnation_k"],
             ),
         ),
         (
-            "05_contour_mutation_stagnation",
+            "06_contour_mutation_stagnation",
             lambda: optuna.visualization.plot_contour(
                 study,
                 params=["mutation_rate", "stagnation_k"],
             ),
         ),
         (
-            "06_contour_population_mutation",
+            "07_contour_population_mutation",
             lambda: optuna.visualization.plot_contour(
                 study,
                 params=["population_size", "mutation_rate"],
             ),
         ),
         (
-            "07_parallel_coordinate",
+            "08_parallel_coordinate",
             lambda: optuna.visualization.plot_parallel_coordinate(study),
         ),
         (
-            "08_slice",
+            "09_slice",
             lambda: optuna.visualization.plot_slice(study),
         ),
     ]
 
-    successes = sum(save_figure(name, factory) for name, factory in figures)
+    successes = sum(
+        save_figure(figures_dir, name, factory)
+        for name, factory in figures
+    )
     print(
         f"\nGenerated {successes}/{len(figures)} figure sets from "
-        f"{len(completed)} completed trials."
+        f"{len(completed)} completed trials for {suffix}."
     )
-    print(f"Figures directory: {FIGURES_DIR}")
+    print(f"Figures directory: {figures_dir}")
 
 
 if __name__ == "__main__":

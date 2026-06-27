@@ -1,0 +1,98 @@
+name: Optuna - Multi Instance Parallel
+
+on:
+  workflow_dispatch:
+    inputs:
+      operators:
+        description: "Operadores produtivos disponiveis por dia"
+        required: true
+        default: "20"
+      non_working_dates:
+        description: "Dias sem planeamento, separados por virgulas (YYYY-MM-DD)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  optuna-study:
+    name: "Optuna ${{ matrix.instance_label }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - instance_label: June
+            study_suffix: june
+            instance_file: Inputs_June.xlsx
+          - instance_label: July
+            study_suffix: july
+            instance_file: Inputs_July.xlsx
+          - instance_label: August
+            study_suffix: august
+            instance_file: Inputs_August.xlsx
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Restore Optuna checkpoints
+        uses: actions/cache@v4
+        with:
+          path: |
+            src/optuna_study_${{ matrix.study_suffix }}_v1.db
+            src/optuna_results_${{ matrix.study_suffix }}_v1.csv
+            src/optuna_seed_checkpoint_${{ matrix.study_suffix }}_v1.csv
+            src/optuna_configuration_${{ matrix.study_suffix }}_v1.json
+          key: optuna-${{ matrix.study_suffix }}-v1-${{ github.run_id }}
+          restore-keys: |
+            optuna-${{ matrix.study_suffix }}-v1-
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install project dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Optuna visualisation dependencies
+        run: pip install optuna plotly "kaleido==0.2.1" scikit-learn
+
+      - name: Run Optuna study
+        run: >-
+          python src/optuna_test.py
+          --instance-file ${{ matrix.instance_file }}
+          --study-suffix ${{ matrix.study_suffix }}
+          --operators "${{ inputs.operators }}"
+          --non-working-dates "${{ inputs.non_working_dates }}"
+
+      - name: Generate Optuna figures
+        if: always()
+        run: python src/generate_optuna_figures.py --study-suffix ${{ matrix.study_suffix }}
+        continue-on-error: true
+
+      - name: Upload study results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optuna-${{ matrix.study_suffix }}-study
+          path: |
+            src/optuna_study_${{ matrix.study_suffix }}_v1.db
+            src/optuna_results_${{ matrix.study_suffix }}_v1.csv
+            src/optuna_seed_checkpoint_${{ matrix.study_suffix }}_v1.csv
+            src/optuna_configuration_${{ matrix.study_suffix }}_v1.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload Optuna figures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: optuna-${{ matrix.study_suffix }}-figures
+          path: src/optuna_figures_${{ matrix.study_suffix }}_v1/
+          if-no-files-found: warn
+          retention-days: 30
