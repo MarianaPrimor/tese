@@ -139,7 +139,7 @@ jobs:
             src/outputs/final_july_tests/test_4_shift_structure_per_day_shift_utilisation.csv
 
   collect-results:
-    name: "Collect final July test CSVs"
+    name: "Collect final July test outputs"
     needs:
       - test-1-demand-scaling
       - test-2-operator-availability
@@ -153,13 +153,30 @@ jobs:
         with:
           path: final_july_tests_artifacts
 
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install plotting dependencies
+        run: pip install -r requirements.txt
+
       - name: Reorganize CSVs
         run: |
           mkdir -p final_july_tests_final
           find final_july_tests_artifacts -name "*.csv" -exec cp {} final_july_tests_final/ \;
 
-      - name: Upload combined CSV package
+      - name: Generate final figures
+        run: >
+          python src/final_july_tests.py
+          --plots-only
+          --output-dir final_july_tests_final
+
+      - name: Upload combined results package
         uses: actions/upload-artifact@v4
         with:
-          name: final-july-tests-all-csvs
+          name: final-july-tests-all-results
           path: final_july_tests_final/

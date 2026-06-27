@@ -5,6 +5,13 @@ import pathlib
 import statistics
 import sys
 
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
+import pandas as pd
+
 from evaluator import (
     DEFAULT_NORMALISED_WEIGHTS,
     evaluate_solution,
@@ -221,26 +228,54 @@ def slot_to_shift(slot, shifts_per_day):
 def shift_utilisation_rows(instance, solution, scenario, seed, shifts_per_day):
     metrics = evaluate_solution(solution, instance)
     production_by_slot_line = metrics.get("production_time_by_day_line", {})
+    operator_intervals = metrics.get("operator_usage_intervals", [])
     rows = []
 
     for slot in range(1, instance["n_days"] + 1):
         calendar_day = slot_to_day(slot, shifts_per_day)
         shift = slot_to_shift(slot, shifts_per_day)
         available = get_available_line_time_for_day(instance, slot)
+        line_count = len(instance.get("final_lines", []))
+        total_available = available * line_count
+        total_production = sum(
+            production_by_slot_line.get((slot, line), 0)
+            for line in instance.get("final_lines", [])
+        )
+        slot_intervals = [
+            interval
+            for interval in operator_intervals
+            if interval.get("day") == slot
+        ]
+        operator_minutes = sum(
+            max(0, interval.get("end", 0) - interval.get("start", 0))
+            * interval.get("operators", 0)
+            for interval in slot_intervals
+        )
+        peak_operators = max(
+            [interval.get("operators", 0) for interval in slot_intervals],
+            default=0,
+        )
+        avg_operators = operator_minutes / available if available else 0
 
-        for line in instance.get("final_lines", []):
-            production = production_by_slot_line.get((slot, line), 0)
-            rows.append({
-                "scenario": scenario,
-                "seed": seed,
-                "calendar_day": calendar_day,
-                "shift": shift,
-                "slot": slot,
-                "line": line,
-                "production_time_min": production,
-                "available_time_min": available,
-                "utilisation_pct": production / available * 100 if available else 0,
-            })
+        rows.append({
+            "scenario": scenario,
+            "seed": seed,
+            "calendar_day": calendar_day,
+            "shift": shift,
+            "slot": slot,
+            "line_count": line_count,
+            "production_time_min": total_production,
+            "available_time_min": total_available,
+            "capacity_utilisation_pct": (
+                total_production / total_available * 100
+                if total_available
+                else 0
+            ),
+            "operator_minutes": operator_minutes,
+            "avg_operators_used": avg_operators,
+            "peak_operators_used": peak_operators,
+            "active_shift": total_production > 0,
+        })
 
     return rows
 
@@ -270,6 +305,14 @@ def summarise(rows, group_columns):
         "actual_generations",
         "avg_capacity_utilisation_shift_1_pct",
         "avg_capacity_utilisation_shift_2_pct",
+        "avg_operators_used_shift_1",
+        "avg_operators_used_shift_2",
+        "peak_operators_used_shift_1",
+        "peak_operators_used_shift_2",
+        "active_days_shift_1",
+        "active_days_shift_2",
+        "active_day_pct_shift_1",
+        "active_day_pct_shift_2",
     ]
     grouped = {}
     for row in rows:
@@ -392,15 +435,221 @@ def run_test_4(base_instance):
             per_shift_rows.extend(shift_rows)
 
             for shift in range(1, shifts_per_day + 1):
-                values = [
-                    item["utilisation_pct"]
+                shift_items = [
+                    item
                     for item in shift_rows
                     if item["shift"] == shift
                 ]
-                row[f"avg_capacity_utilisation_shift_{shift}_pct"] = mean(values)
+                row[f"avg_capacity_utilisation_shift_{shift}_pct"] = mean(
+                    [item["capacity_utilisation_pct"] for item in shift_items]
+                )
+                row[f"avg_operators_used_shift_{shift}"] = mean(
+                    [item["avg_operators_used"] for item in shift_items]
+                )
+                row[f"peak_operators_used_shift_{shift}"] = max(
+                    [item["peak_operators_used"] for item in shift_items],
+                    default=0,
+                )
+                active_days = len({
+                    item["calendar_day"]
+                    for item in shift_items
+                    if item["active_shift"]
+                })
+                total_days = len({item["calendar_day"] for item in shift_items})
+                row[f"active_days_shift_{shift}"] = active_days
+                row[f"active_day_pct_shift_{shift}"] = (
+                    active_days / total_days * 100
+                    if total_days
+                    else 0
+                )
             rows.append(row)
 
     return rows, summarise(rows, ["scenario"]), per_shift_rows
+
+
+def plot_line(df, x_col, y_col, path, title, x_label, y_label, group_col=None):
+    fig, ax = plt.subplots(figsize=(8, 4.8))
+    if group_col:
+        for group, group_df in df.groupby(group_col):
+            group_df = group_df.sort_values(x_col)
+            ax.plot(group_df[x_col], group_df[y_col], marker="o", linewidth=2, label=str(group))
+        ax.legend(title=group_col.replace("_", " ").title(), fontsize=8)
+    else:
+        df = df.sort_values(x_col)
+        ax.plot(df[x_col], df[y_col], marker="o", linewidth=2, color="#153e7e")
+    ax.set_title(title, fontweight="bold")
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
+    ax.grid(True, alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def plot_dual_axis(df, x_col, left_col, right_col, path, title, x_label, left_label, right_label):
+    df = df.sort_values(x_col)
+    fig, ax_left = plt.subplots(figsize=(8, 4.8))
+    ax_right = ax_left.twinx()
+    left_line = ax_left.plot(df[x_col], df[left_col], marker="o", color="#153e7e", label=left_label)
+    right_line = ax_right.plot(df[x_col], df[right_col], marker="s", color="#b6003b", label=right_label)
+    ax_left.set_title(title, fontweight="bold")
+    ax_left.set_xlabel(x_label)
+    ax_left.set_ylabel(left_label)
+    ax_right.set_ylabel(right_label)
+    ax_left.grid(True, alpha=0.25)
+    lines = left_line + right_line
+    labels = [line.get_label() for line in lines]
+    ax_left.legend(lines, labels, loc="best", fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def plot_grouped_bars(df, category_col, value_cols, path, title, y_label):
+    labels = df[category_col].astype(str).tolist()
+    x_positions = range(len(labels))
+    width = 0.8 / max(1, len(value_cols))
+    fig, ax = plt.subplots(figsize=(9, 4.8))
+    colors = ["#153e7e", "#b6003b", "#2f7d32", "#f59e0b"]
+    for index, value_col in enumerate(value_cols):
+        offset = (index - (len(value_cols) - 1) / 2) * width
+        values = df[value_col].fillna(0).tolist()
+        ax.bar(
+            [position + offset for position in x_positions],
+            values,
+            width=width,
+            label=value_col.replace("mean_", "").replace("_", " "),
+            color=colors[index % len(colors)],
+        )
+    ax.set_title(title, fontweight="bold")
+    ax.set_ylabel(y_label)
+    ax.set_xticks(list(x_positions))
+    ax.set_xticklabels(labels, rotation=15, ha="right")
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def plot_heatmap(df, index_col, column_col, value_col, path, title, cbar_label):
+    pivot = df.pivot_table(
+        index=index_col,
+        columns=column_col,
+        values=value_col,
+        aggfunc="mean",
+    ).sort_index()
+    fig, ax = plt.subplots(figsize=(8, max(4.8, len(pivot) * 0.28)))
+    image = ax.imshow(pivot.values, aspect="auto", cmap="YlGnBu")
+    ax.set_title(title, fontweight="bold")
+    ax.set_xlabel(column_col.replace("_", " ").title())
+    ax.set_ylabel(index_col.replace("_", " ").title())
+    ax.set_xticks(range(len(pivot.columns)))
+    ax.set_xticklabels([str(col) for col in pivot.columns])
+    ax.set_yticks(range(len(pivot.index)))
+    ax.set_yticklabels([str(idx) for idx in pivot.index])
+    cbar = fig.colorbar(image, ax=ax)
+    cbar.set_label(cbar_label)
+    fig.tight_layout()
+    fig.savefig(path, dpi=180)
+    plt.close(fig)
+
+
+def read_optional_csv(path):
+    return pd.read_csv(path) if path.exists() else None
+
+
+def combine_weight_csvs(output_dir, kind):
+    combined_path = output_dir / f"test_3_weight_sensitivity_{kind}.csv"
+    if combined_path.exists():
+        return pd.read_csv(combined_path)
+
+    frames = []
+    for weight_index in range(len(WEIGHT_NAMES)):
+        path = output_dir / f"test_3_weight_sensitivity_{kind}_weight_{weight_index}.csv"
+        if path.exists():
+            frames.append(pd.read_csv(path))
+
+    if not frames:
+        return None
+
+    combined = pd.concat(frames, ignore_index=True)
+    combined.to_csv(combined_path, index=False, encoding="utf-8-sig")
+    print(f"Wrote {combined_path}")
+    return combined
+
+
+def generate_plots(output_dir):
+    output_dir = pathlib.Path(output_dir)
+    plots_dir = output_dir / "plots"
+    plots_dir.mkdir(parents=True, exist_ok=True)
+
+    test_1 = read_optional_csv(output_dir / "test_1_demand_scaling_summary.csv")
+    if test_1 is not None:
+        plot_line(test_1, "demand_factor", "mean_fitness", plots_dir / "test_1_fitness_by_demand.png", "Test 1 - Fitness by demand factor", "Demand factor", "Mean fitness")
+        plot_line(test_1, "demand_factor", "mean_postponed_orders", plots_dir / "test_1_postponed_by_demand.png", "Test 1 - Postponed orders by demand factor", "Demand factor", "Mean postponed orders")
+        plot_line(test_1, "demand_factor", "mean_fulfilment_rate_pct", plots_dir / "test_1_fulfilment_by_demand.png", "Test 1 - Fulfilment by demand factor", "Demand factor", "Fulfilment rate (%)")
+        plot_dual_axis(test_1, "demand_factor", "mean_scheduled_economic_value_eur", "mean_scheduled_kg", plots_dir / "test_1_value_kg_by_demand.png", "Test 1 - Scheduled value and kg by demand factor", "Demand factor", "Scheduled value (€)", "Scheduled kg")
+        plot_dual_axis(test_1, "demand_factor", "mean_setup_time_min", "mean_operator_utilisation_min", plots_dir / "test_1_setup_operator_by_demand.png", "Test 1 - Setup and operator use by demand factor", "Demand factor", "Setup time (min)", "Operator-minutes")
+
+    test_2 = read_optional_csv(output_dir / "test_2_operator_availability_summary.csv")
+    if test_2 is not None:
+        plot_line(test_2, "operators", "mean_fitness", plots_dir / "test_2_fitness_by_operators.png", "Test 2 - Fitness by operators", "Operators", "Mean fitness")
+        plot_line(test_2, "operators", "mean_postponed_orders", plots_dir / "test_2_postponed_by_operators.png", "Test 2 - Postponed orders by operators", "Operators", "Mean postponed orders")
+        plot_line(test_2, "operators", "mean_fulfilment_rate_pct", plots_dir / "test_2_fulfilment_by_operators.png", "Test 2 - Fulfilment by operators", "Operators", "Fulfilment rate (%)")
+        plot_dual_axis(test_2, "operators", "mean_scheduled_economic_value_eur", "mean_scheduled_kg", plots_dir / "test_2_value_kg_by_operators.png", "Test 2 - Scheduled value and kg by operators", "Operators", "Scheduled value (€)", "Scheduled kg")
+        plot_dual_axis(test_2, "operators", "mean_setup_time_min", "mean_operator_utilisation_min", plots_dir / "test_2_setup_operator_by_operators.png", "Test 2 - Setup and operator use by operators", "Operators", "Setup time (min)", "Operator-minutes")
+
+    test_3 = combine_weight_csvs(output_dir, "summary")
+    if test_3 is not None:
+        test_3 = test_3.sort_values(["weight_name", "tested_weight_value"])
+        metric_plots = [
+            ("mean_fitness", "test_3_fitness_by_weight.png", "Test 3 - Fitness by tested weight", "Mean fitness"),
+            ("mean_postponed_orders", "test_3_postponed_by_weight.png", "Test 3 - Postponed orders by tested weight", "Mean postponed orders"),
+            ("mean_fulfilment_rate_pct", "test_3_fulfilment_by_weight.png", "Test 3 - Fulfilment by tested weight", "Fulfilment rate (%)"),
+            ("mean_scheduled_economic_value_eur", "test_3_value_by_weight.png", "Test 3 - Scheduled value by tested weight", "Scheduled value (€)"),
+            ("mean_setup_time_min", "test_3_setup_by_weight.png", "Test 3 - Setup time by tested weight", "Setup time (min)"),
+            ("mean_operator_utilisation_min", "test_3_operator_by_weight.png", "Test 3 - Operator use by tested weight", "Operator-minutes"),
+        ]
+        for metric, filename, title, y_label in metric_plots:
+            plot_line(test_3, "tested_weight_value", metric, plots_dir / filename, title, "Tested weight value", y_label, group_col="weight_name")
+        plot_heatmap(test_3, "weight_name", "tested_weight_value", "mean_fitness", plots_dir / "test_3_weight_fitness_heatmap.png", "Test 3 - Fitness heatmap by weight and value", "Mean fitness")
+        plot_heatmap(test_3, "weight_name", "tested_weight_value", "mean_postponed_orders", plots_dir / "test_3_weight_postponed_heatmap.png", "Test 3 - Postponed orders heatmap by weight and value", "Mean postponed orders")
+
+    test_4 = read_optional_csv(output_dir / "test_4_shift_structure_summary.csv")
+    if test_4 is not None:
+        plot_grouped_bars(test_4, "scenario", ["mean_fitness", "mean_postponed_orders", "mean_fulfilment_rate_pct"], plots_dir / "test_4_scenario_comparison.png", "Test 4 - Scenario comparison", "Mean value")
+        shift_cols = [
+            col
+            for col in ["mean_avg_capacity_utilisation_shift_1_pct", "mean_avg_capacity_utilisation_shift_2_pct"]
+            if col in test_4.columns
+        ]
+        if shift_cols:
+            plot_grouped_bars(test_4, "scenario", shift_cols, plots_dir / "test_4_shift_capacity_utilisation.png", "Test 4 - Capacity utilisation by shift", "Capacity utilisation (%)")
+        operator_cols = [
+            col
+            for col in ["mean_avg_operators_used_shift_1", "mean_avg_operators_used_shift_2"]
+            if col in test_4.columns
+        ]
+        if operator_cols:
+            plot_grouped_bars(test_4, "scenario", operator_cols, plots_dir / "test_4_avg_operators_by_shift.png", "Test 4 - Average operators used by shift", "Average operators")
+        peak_cols = [
+            col
+            for col in ["mean_peak_operators_used_shift_1", "mean_peak_operators_used_shift_2"]
+            if col in test_4.columns
+        ]
+        if peak_cols:
+            plot_grouped_bars(test_4, "scenario", peak_cols, plots_dir / "test_4_peak_operators_by_shift.png", "Test 4 - Peak operators used by shift", "Peak operators")
+
+    test_4_shift = read_optional_csv(output_dir / "test_4_shift_structure_per_day_shift_utilisation.csv")
+    if test_4_shift is not None:
+        two_shift = test_4_shift[test_4_shift["scenario"] == "two_shift_slots"].copy()
+        if not two_shift.empty:
+            plot_heatmap(two_shift, "calendar_day", "shift", "capacity_utilisation_pct", plots_dir / "test_4_daily_shift_capacity_heatmap.png", "Test 4 - Daily capacity utilisation by shift", "Capacity utilisation (%)")
+            plot_heatmap(two_shift, "calendar_day", "shift", "avg_operators_used", plots_dir / "test_4_daily_shift_avg_operators_heatmap.png", "Test 4 - Daily average operators by shift", "Average operators")
+            plot_heatmap(two_shift, "calendar_day", "shift", "peak_operators_used", plots_dir / "test_4_daily_shift_peak_operators_heatmap.png", "Test 4 - Daily peak operators by shift", "Peak operators")
+
+    print(f"Wrote plots to {plots_dir}")
 
 
 def parse_args():
@@ -415,6 +664,11 @@ def parse_args():
     parser.add_argument("--instance-file", default=str(DEFAULT_INSTANCE_FILE))
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
     parser.add_argument(
+        "--plots-only",
+        action="store_true",
+        help="Generate PNG plots from existing CSV outputs without running the GA.",
+    )
+    parser.add_argument(
         "--weight-index",
         type=int,
         choices=range(6),
@@ -427,6 +681,11 @@ def parse_args():
 def main():
     args = parse_args()
     output_dir = pathlib.Path(args.output_dir)
+
+    if args.plots_only:
+        generate_plots(output_dir)
+        return
+
     base_instance = load_july_instance(pathlib.Path(args.instance_file), operators=20)
 
     if args.test in ("1", "all"):
