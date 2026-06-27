@@ -7,8 +7,16 @@ on:
         description: "Operadores produtivos disponiveis por dia"
         required: true
         default: "20"
-      non_working_dates:
-        description: "Dias sem planeamento, separados por virgulas (YYYY-MM-DD)"
+      june_non_working_dates:
+        description: "Dias sem planeamento em junho, separados por virgulas (YYYY-MM-DD)"
+        required: false
+        default: ""
+      july_non_working_dates:
+        description: "Dias sem planeamento em julho, separados por virgulas (YYYY-MM-DD)"
+        required: false
+        default: ""
+      august_non_working_dates:
+        description: "Dias sem planeamento em agosto, separados por virgulas (YYYY-MM-DD)"
         required: false
         default: ""
 
@@ -63,12 +71,20 @@ jobs:
         run: pip install optuna plotly "kaleido==0.2.1" scikit-learn
 
       - name: Run Optuna study
-        run: >-
-          python src/optuna_test.py
-          --instance-file ${{ matrix.instance_file }}
-          --study-suffix ${{ matrix.study_suffix }}
-          --operators "${{ inputs.operators }}"
-          --non-working-dates "${{ inputs.non_working_dates }}"
+        run: |
+          if [ "${{ matrix.study_suffix }}" = "june" ]; then
+            NON_WORKING_DATES="${{ inputs.june_non_working_dates }}"
+          elif [ "${{ matrix.study_suffix }}" = "july" ]; then
+            NON_WORKING_DATES="${{ inputs.july_non_working_dates }}"
+          else
+            NON_WORKING_DATES="${{ inputs.august_non_working_dates }}"
+          fi
+
+          python src/optuna_test.py \
+            --instance-file ${{ matrix.instance_file }} \
+            --study-suffix ${{ matrix.study_suffix }} \
+            --operators "${{ inputs.operators }}" \
+            --non-working-dates "$NON_WORKING_DATES"
 
       - name: Generate Optuna figures
         if: always()
