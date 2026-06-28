@@ -148,11 +148,6 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: final_july_tests_artifacts
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -163,6 +158,11 @@ jobs:
 
       - name: Install plotting dependencies
         run: pip install -r requirements.txt
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: final_july_tests_artifacts
 
       - name: Reorganize CSVs
         run: |
