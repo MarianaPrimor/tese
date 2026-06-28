@@ -38,6 +38,14 @@ WEIGHT_NAMES = [
     "capacity_utilisation",
     "operator_utilisation",
 ]
+WEIGHT_LABELS = {
+    "postponement": "Postponement",
+    "delay": "Delay",
+    "setup": "Setup",
+    "economic_value": "Economic value",
+    "capacity_utilisation": "Capacity utilisation",
+    "operator_utilisation": "Operator utilisation",
+}
 
 GA_PARAMETERS = {
     "population_size": 108,
@@ -555,6 +563,236 @@ def plot_heatmap(df, index_col, column_col, value_col, path, title, cbar_label):
     plt.close(fig)
 
 
+def plot_test3_weight_profiles(test_3, plots_dir):
+    metrics = [
+        ("mean_fitness", "Fitness", "Mean fitness"),
+        ("mean_fulfilment_rate_pct", "Fulfilment rate", "Fulfilment rate (%)"),
+        ("mean_postponed_orders", "Postponed orders", "Mean postponed orders"),
+        ("mean_scheduled_economic_value_eur", "Scheduled economic value", "Scheduled value (EUR)"),
+        ("mean_setup_time_min", "Setup time", "Setup time (min)"),
+        ("mean_operator_utilisation_min", "Operator utilisation", "Operator-minutes"),
+    ]
+
+    for weight_name in WEIGHT_NAMES:
+        weight_df = (
+            test_3[test_3["weight_name"] == weight_name]
+            .sort_values("tested_weight_value")
+            .copy()
+        )
+        if weight_df.empty:
+            continue
+
+        fig, axes = plt.subplots(2, 3, figsize=(14, 7.5), sharex=True)
+        default_value = DEFAULT_NORMALISED_WEIGHTS.get(weight_name, 0)
+
+        for ax, (metric_col, title, y_label) in zip(axes.flat, metrics):
+            ax.plot(
+                weight_df["tested_weight_value"],
+                weight_df[metric_col],
+                marker="o",
+                linewidth=2,
+                color="#153e7e",
+            )
+            ax.axvline(
+                default_value,
+                color="#b6003b",
+                linestyle="--",
+                linewidth=1.8,
+                label=f"Default = {default_value:.3f}",
+            )
+            ax.set_title(title, fontweight="bold", fontsize=10)
+            ax.set_xlabel("Tested weight value")
+            ax.set_ylabel(y_label)
+            ax.set_xlim(0, 1)
+            ax.grid(True, alpha=0.25)
+
+        handles, labels = axes.flat[0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc="upper right", frameon=False)
+        fig.suptitle(
+            f"Test 3 - {WEIGHT_LABELS.get(weight_name, weight_name)} weight profile",
+            fontweight="bold",
+            fontsize=14,
+        )
+        fig.tight_layout(rect=[0, 0, 0.96, 0.94])
+        fig.savefig(plots_dir / f"test3_weight_profile_{weight_name}.png", dpi=180)
+        plt.close(fig)
+
+
+def plot_test3_fulfilment_heatmap(test_3, plots_dir):
+    pivot = (
+        test_3.pivot_table(
+            index="weight_name",
+            columns="tested_weight_value",
+            values="mean_fulfilment_rate_pct",
+            aggfunc="mean",
+        )
+        .reindex(WEIGHT_NAMES)
+        .sort_index(axis=1)
+    )
+    fig, ax = plt.subplots(figsize=(10, 4.8))
+    image = ax.imshow(pivot.values, aspect="auto", cmap="YlGnBu")
+    ax.set_title("Test 3 - Fulfilment rate heatmap", fontweight="bold")
+    ax.set_xlabel("Tested weight value")
+    ax.set_ylabel("Weight")
+    ax.set_xticks(range(len(pivot.columns)))
+    ax.set_xticklabels([f"{value:.1f}" for value in pivot.columns])
+    ax.set_yticks(range(len(pivot.index)))
+    ax.set_yticklabels([WEIGHT_LABELS.get(value, value) for value in pivot.index])
+    cbar = fig.colorbar(image, ax=ax)
+    cbar.set_label("Fulfilment rate (%)")
+    fig.tight_layout()
+    fig.savefig(plots_dir / "test3_fulfilment_heatmap.png", dpi=180)
+    plt.close(fig)
+
+
+def plot_test3_sensitivity_range(test_3, plots_dir):
+    ranges = (
+        test_3.groupby("weight_name")["mean_fulfilment_rate_pct"]
+        .agg(lambda values: values.max() - values.min())
+        .reindex(WEIGHT_NAMES)
+        .dropna()
+        .sort_values(ascending=True)
+    )
+
+    fig, ax = plt.subplots(figsize=(8, 4.8))
+    labels = [WEIGHT_LABELS.get(weight, weight) for weight in ranges.index]
+    bars = ax.barh(labels, ranges.values, color="#153e7e")
+    ax.set_title("Fulfilment Rate Sensitivity by Weight", fontweight="bold")
+    ax.set_xlabel("Fulfilment rate range (percentage points)")
+    ax.grid(axis="x", alpha=0.25)
+
+    for bar, value in zip(bars, ranges.values):
+        ax.text(
+            bar.get_width(),
+            bar.get_y() + bar.get_height() / 2,
+            f" {value:.2f}",
+            va="center",
+            fontsize=9,
+        )
+
+    fig.tight_layout()
+    fig.savefig(plots_dir / "test3_sensitivity_range.png", dpi=180)
+    plt.close(fig)
+
+
+def plot_test4_normalised_comparison(test_4, plots_dir):
+    metrics = [
+        ("mean_fulfilment_rate_pct", "Fulfilment rate"),
+        ("mean_postponed_orders", "Postponed orders"),
+        ("mean_scheduled_economic_value_eur", "Economic value"),
+        ("mean_setup_time_min", "Setup time"),
+        ("mean_operator_utilisation_min", "Operator utilisation"),
+    ]
+    baseline_rows = test_4[test_4["scenario"] == "one_shift_baseline"]
+    if baseline_rows.empty:
+        return
+
+    baseline = baseline_rows.iloc[0]
+    scenarios = test_4["scenario"].tolist()
+    x_positions = range(len(metrics))
+    width = 0.34
+    colors = {
+        "one_shift_baseline": "#153e7e",
+        "two_shift_slots": "#b6003b",
+    }
+
+    fig, ax = plt.subplots(figsize=(10, 5.2))
+    for scenario_index, scenario in enumerate(scenarios):
+        scenario_row = test_4[test_4["scenario"] == scenario].iloc[0]
+        values = []
+        for metric_col, _ in metrics:
+            base_value = baseline.get(metric_col, 0)
+            scenario_value = scenario_row.get(metric_col, 0)
+            if base_value == 0:
+                values.append(0)
+            else:
+                values.append((scenario_value - base_value) / abs(base_value) * 100)
+
+        offset = (scenario_index - (len(scenarios) - 1) / 2) * width
+        ax.bar(
+            [position + offset for position in x_positions],
+            values,
+            width=width,
+            label=scenario.replace("_", " "),
+            color=colors.get(scenario, "#2f7d32"),
+        )
+
+    ax.axhline(0, color="#172033", linewidth=1)
+    ax.set_title("Test 4 - Normalised scenario comparison", fontweight="bold")
+    ax.set_ylabel("Change relative to one-shift baseline (%)")
+    ax.set_xticks(list(x_positions))
+    ax.set_xticklabels([label for _, label in metrics], rotation=20, ha="right")
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(plots_dir / "test4_normalised_comparison.png", dpi=180)
+    plt.close(fig)
+
+
+def plot_test4_daily_capacity_utilisation(test_4_shift, plots_dir):
+    daily = (
+        test_4_shift.groupby(["scenario", "calendar_day", "shift"])["capacity_utilisation_pct"]
+        .mean()
+        .reset_index()
+    )
+    fig, ax = plt.subplots(figsize=(10, 5.2))
+
+    baseline = daily[
+        (daily["scenario"] == "one_shift_baseline")
+        & (daily["shift"] == 1)
+    ].sort_values("calendar_day")
+    if not baseline.empty:
+        ax.plot(
+            baseline["calendar_day"],
+            baseline["capacity_utilisation_pct"],
+            marker="o",
+            linewidth=2.2,
+            color="#153e7e",
+            linestyle="-",
+            label="One shift baseline - shift 1",
+        )
+
+    two_shift_1 = daily[
+        (daily["scenario"] == "two_shift_slots")
+        & (daily["shift"] == 1)
+    ].sort_values("calendar_day")
+    if not two_shift_1.empty:
+        ax.plot(
+            two_shift_1["calendar_day"],
+            two_shift_1["capacity_utilisation_pct"],
+            marker="o",
+            linewidth=2,
+            color="#153e7e",
+            linestyle="--",
+            label="Two-shift scenario - shift 1",
+        )
+
+    two_shift_2 = daily[
+        (daily["scenario"] == "two_shift_slots")
+        & (daily["shift"] == 2)
+    ].sort_values("calendar_day")
+    if not two_shift_2.empty:
+        ax.plot(
+            two_shift_2["calendar_day"],
+            two_shift_2["capacity_utilisation_pct"],
+            marker="s",
+            linewidth=2,
+            color="#b6003b",
+            linestyle="--",
+            label="Two-shift scenario - shift 2",
+        )
+
+    ax.set_title("Test 4 - Daily capacity utilisation by shift", fontweight="bold")
+    ax.set_xlabel("Planning day")
+    ax.set_ylabel("Capacity utilisation (%)")
+    ax.set_xticks(sorted(daily["calendar_day"].unique()))
+    ax.grid(True, alpha=0.25)
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(plots_dir / "test4_daily_capacity_utilisation.png", dpi=180)
+    plt.close(fig)
+
+
 def read_optional_csv(path):
     return pd.read_csv(path) if path.exists() else None
 
@@ -603,6 +841,9 @@ def generate_plots(output_dir):
     test_3 = combine_weight_csvs(output_dir, "summary")
     if test_3 is not None:
         test_3 = test_3.sort_values(["weight_name", "tested_weight_value"])
+        plot_test3_weight_profiles(test_3, plots_dir)
+        plot_test3_fulfilment_heatmap(test_3, plots_dir)
+        plot_test3_sensitivity_range(test_3, plots_dir)
         metric_plots = [
             ("mean_fitness", "test_3_fitness_by_weight.png", "Test 3 - Fitness by tested weight", "Mean fitness"),
             ("mean_postponed_orders", "test_3_postponed_by_weight.png", "Test 3 - Postponed orders by tested weight", "Mean postponed orders"),
@@ -618,6 +859,7 @@ def generate_plots(output_dir):
 
     test_4 = read_optional_csv(output_dir / "test_4_shift_structure_summary.csv")
     if test_4 is not None:
+        plot_test4_normalised_comparison(test_4, plots_dir)
         plot_grouped_bars(test_4, "scenario", ["mean_fitness", "mean_postponed_orders", "mean_fulfilment_rate_pct"], plots_dir / "test_4_scenario_comparison.png", "Test 4 - Scenario comparison", "Mean value")
         shift_cols = [
             col
@@ -643,6 +885,7 @@ def generate_plots(output_dir):
 
     test_4_shift = read_optional_csv(output_dir / "test_4_shift_structure_per_day_shift_utilisation.csv")
     if test_4_shift is not None:
+        plot_test4_daily_capacity_utilisation(test_4_shift, plots_dir)
         two_shift = test_4_shift[test_4_shift["scenario"] == "two_shift_slots"].copy()
         if not two_shift.empty:
             plot_heatmap(two_shift, "calendar_day", "shift", "capacity_utilisation_pct", plots_dir / "test_4_daily_shift_capacity_heatmap.png", "Test 4 - Daily capacity utilisation by shift", "Capacity utilisation (%)")
