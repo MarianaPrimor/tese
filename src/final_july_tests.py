@@ -66,6 +66,8 @@ BASELINE_OPERATIONAL_CONFIG = {
     "shifts": 1,
 }
 
+SHIFT_EXTENSION_HOURS = [0, 1, 2, 3, 4]
+
 
 def load_july_instance(instance_file, operators=20):
     config = dict(BASELINE_OPERATIONAL_CONFIG)
@@ -180,6 +182,32 @@ def make_two_shift_slot_instance(instance):
             order["delivery_date"] = int(order["delivery_date"]) * shifts_per_day
 
     scenario.setdefault("_meta", {})["shift_slots_per_day"] = shifts_per_day
+    scenario.setdefault("_meta", {})["extra_hours_per_day"] = 7.5
+    scenario.setdefault("_meta", {})["extra_capacity_min_per_day"] = 450
+    scenario.setdefault("_meta", {})["scenario_type"] = "full_second_shift"
+    return scenario
+
+
+def make_shift_extension_instance(instance, extra_hours):
+    """Extend the baseline shift by extra productive hours each working day."""
+    scenario = copy.deepcopy(instance)
+    extra_minutes = int(round(extra_hours * 60))
+
+    scenario["daily_capacity_min"] = {
+        day: get_available_line_time_for_day(instance, day) + extra_minutes
+        for day in range(1, instance.get("n_days", 0) + 1)
+    }
+    scenario["daily_shift_end_min"] = {
+        day: instance.get("daily_shift_end_min", {}).get(day, 16 * 60 + 30)
+        + extra_minutes
+        for day in range(1, instance.get("n_days", 0) + 1)
+    }
+    scenario["available_line_time_min"] = (
+        instance.get("available_line_time_min", 450) + extra_minutes
+    )
+    scenario.setdefault("_meta", {})["extra_hours_per_day"] = extra_hours
+    scenario.setdefault("_meta", {})["extra_capacity_min_per_day"] = extra_minutes
+    scenario.setdefault("_meta", {})["scenario_type"] = "shift_extension"
     return scenario
 
 
@@ -313,6 +341,12 @@ def summarise(rows, group_columns):
         "operator_violations",
         "peak_operators",
         "actual_generations",
+        "extra_hours_per_day",
+        "extra_capacity_min_per_day",
+        "extra_scheduled_boxes_vs_baseline",
+        "extra_scheduled_kg_vs_baseline",
+        "extra_value_vs_baseline",
+        "postponed_boxes_reduction_vs_baseline",
         "avg_capacity_utilisation_shift_1_pct",
         "avg_capacity_utilisation_shift_2_pct",
         "avg_operators_used_shift_1",
@@ -419,18 +453,37 @@ def run_test_3(base_instance, weight_index=None):
 def run_test_4(base_instance):
     rows = []
     per_shift_rows = []
-    scenarios = [
-        ("one_shift_baseline", 1, base_instance),
-        ("two_shift_slots", 2, make_two_shift_slot_instance(base_instance)),
-    ]
+    scenarios = []
+    for extra_hours in SHIFT_EXTENSION_HOURS:
+        scenario_name = (
+            "baseline_0h"
+            if extra_hours == 0
+            else f"extension_plus_{extra_hours}h"
+        )
+        scenarios.append((
+            scenario_name,
+            1,
+            make_shift_extension_instance(base_instance, extra_hours),
+            extra_hours,
+            extra_hours * 60,
+        ))
+    scenarios.append((
+        "full_second_shift",
+        2,
+        make_two_shift_slot_instance(base_instance),
+        7.5,
+        450,
+    ))
 
-    for scenario_name, shifts_per_day, instance in scenarios:
+    for scenario_name, shifts_per_day, instance, extra_hours, extra_capacity_min in scenarios:
         for seed in SEEDS:
             solution, metrics = run_ga_case(instance, seed)
             row = {
-                "test": "test_4_shift_structure",
+                "test": "test_4_shift_extension",
                 "scenario": scenario_name,
                 "shifts_per_day": shifts_per_day,
+                "extra_hours_per_day": extra_hours,
+                "extra_capacity_min_per_day": extra_capacity_min,
                 "seed": seed,
             }
             row.update(extract_kpis(metrics, instance))
@@ -473,6 +526,34 @@ def run_test_4(base_instance):
                     else 0
                 )
             rows.append(row)
+
+    baseline_by_seed = {
+        row["seed"]: row
+        for row in rows
+        if row["scenario"] == "baseline_0h"
+    }
+    for row in rows:
+        baseline = baseline_by_seed.get(row["seed"])
+        if not baseline:
+            continue
+        scheduled_boxes = total_demand_boxes(base_instance) - row.get("postponed_boxes", 0)
+        baseline_scheduled_boxes = (
+            total_demand_boxes(base_instance)
+            - baseline.get("postponed_boxes", 0)
+        )
+        row["extra_scheduled_boxes_vs_baseline"] = (
+            scheduled_boxes - baseline_scheduled_boxes
+        )
+        row["extra_scheduled_kg_vs_baseline"] = (
+            row.get("scheduled_kg", 0) - baseline.get("scheduled_kg", 0)
+        )
+        row["extra_value_vs_baseline"] = (
+            row.get("scheduled_economic_value_eur", 0)
+            - baseline.get("scheduled_economic_value_eur", 0)
+        )
+        row["postponed_boxes_reduction_vs_baseline"] = (
+            baseline.get("postponed_boxes", 0) - row.get("postponed_boxes", 0)
+        )
 
     return rows, summarise(rows, ["scenario"]), per_shift_rows
 
@@ -704,20 +785,24 @@ def plot_test4_normalised_comparison(test_4, plots_dir):
         ("mean_setup_time_min", "Setup time"),
         ("mean_operator_utilisation_min", "Operator utilisation"),
     ]
-    baseline_rows = test_4[test_4["scenario"] == "one_shift_baseline"]
+    baseline_rows = test_4[test_4["scenario"] == "baseline_0h"]
     if baseline_rows.empty:
         return
 
     baseline = baseline_rows.iloc[0]
-    scenarios = test_4["scenario"].tolist()
+    scenarios = (
+        test_4.sort_values("mean_extra_hours_per_day")["scenario"].tolist()
+        if "mean_extra_hours_per_day" in test_4.columns
+        else test_4["scenario"].tolist()
+    )
     x_positions = range(len(metrics))
-    width = 0.34
+    width = 0.8 / max(1, len(scenarios))
     colors = {
-        "one_shift_baseline": "#153e7e",
-        "two_shift_slots": "#b6003b",
+        "baseline_0h": "#153e7e",
+        "full_second_shift": "#b6003b",
     }
 
-    fig, ax = plt.subplots(figsize=(10, 5.2))
+    fig, ax = plt.subplots(figsize=(11, 5.2))
     for scenario_index, scenario in enumerate(scenarios):
         scenario_row = test_4[test_4["scenario"] == scenario].iloc[0]
         values = []
@@ -739,8 +824,8 @@ def plot_test4_normalised_comparison(test_4, plots_dir):
         )
 
     ax.axhline(0, color="#172033", linewidth=1)
-    ax.set_title("Test 4 - Normalised scenario comparison", fontweight="bold")
-    ax.set_ylabel("Change relative to one-shift baseline (%)")
+    ax.set_title("Test 4 - Normalised capacity extension comparison", fontweight="bold")
+    ax.set_ylabel("Change relative to baseline (%)")
     ax.set_xticks(list(x_positions))
     ax.set_xticklabels([label for _, label in metrics], rotation=20, ha="right")
     ax.grid(axis="y", alpha=0.25)
@@ -757,45 +842,112 @@ def plot_test4_shift_metric_panels(test_4, plots_dir):
         ("mean_scheduled_economic_value_eur", "Economic value", "EUR"),
         ("mean_setup_time_min", "Setup time", "Minutes"),
         ("mean_operator_utilisation_min", "Operator utilisation", "Operator-minutes"),
-        ("mean_avg_capacity_utilisation_shift_2_pct", "Second-shift capacity use", "Utilisation (%)"),
+        ("mean_extra_scheduled_boxes_vs_baseline", "Extra scheduled boxes", "Boxes"),
     ]
-    scenario_order = ["one_shift_baseline", "two_shift_slots"]
-    labels = ["1 shift", "2 shifts"]
-    colors = ["#153e7e", "#b6003b"]
+    plot_df = test_4.sort_values("mean_extra_hours_per_day").copy()
+    labels = [
+        "Full 2nd shift" if row["scenario"] == "full_second_shift"
+        else f"+{row['mean_extra_hours_per_day']:.0f}h"
+        for _, row in plot_df.iterrows()
+    ]
+    colors = ["#153e7e" if label == "+0h" else "#2f7d32" for label in labels]
+    if colors:
+        colors[-1] = "#b6003b" if plot_df.iloc[-1]["scenario"] == "full_second_shift" else colors[-1]
 
     fig, axes = plt.subplots(2, 3, figsize=(14, 7.5))
     for ax, (metric_col, title, y_label) in zip(axes.flat, metrics):
-        values = []
-        for scenario in scenario_order:
-            rows = test_4[test_4["scenario"] == scenario]
-            values.append(float(rows.iloc[0].get(metric_col, 0)) if not rows.empty else 0)
+        values = plot_df[metric_col].fillna(0).astype(float).tolist()
 
         bars = ax.bar(labels, values, color=colors, width=0.58)
         ax.set_title(title, fontweight="bold", fontsize=10)
         ax.set_ylabel(y_label)
+        ax.tick_params(axis="x", rotation=25)
         ax.grid(axis="y", linestyle="--", alpha=0.25)
 
-        baseline_value = values[0]
-        two_shift_value = values[1]
-        if baseline_value != 0:
-            change = (two_shift_value - baseline_value) / abs(baseline_value) * 100
-            ax.text(
-                bars[1].get_x() + bars[1].get_width() / 2,
-                bars[1].get_height(),
-                f"{change:+.1f}%",
-                ha="center",
-                va="bottom",
-                fontsize=9,
-                fontweight="bold",
-            )
+        if metric_col.startswith("mean_extra_") or metric_col.startswith("mean_postponed"):
+            for bar, value in zip(bars, values):
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    bar.get_height(),
+                    f"{value:.0f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,
+                )
 
     fig.suptitle(
-        "Test 4 - Shift structure impact across operational KPIs",
+        "Test 4 - Capacity extension impact across operational KPIs",
         fontweight="bold",
         fontsize=14,
     )
     fig.tight_layout(rect=[0, 0, 1, 0.94])
     fig.savefig(plots_dir / "test4_shift_metric_panels.png", dpi=180)
+    plt.close(fig)
+
+
+def plot_test4_marginal_benefit(test_4, plots_dir):
+    plot_df = test_4.sort_values("mean_extra_hours_per_day").copy()
+    fig, ax_left = plt.subplots(figsize=(9, 5.2))
+    ax_right = ax_left.twinx()
+
+    ax_left.plot(
+        plot_df["mean_extra_hours_per_day"],
+        plot_df["mean_extra_scheduled_boxes_vs_baseline"],
+        marker="o",
+        linewidth=2.4,
+        color="#153e7e",
+        label="Extra scheduled boxes",
+    )
+    ax_right.plot(
+        plot_df["mean_extra_hours_per_day"],
+        plot_df["mean_extra_value_vs_baseline"],
+        marker="s",
+        linewidth=2.4,
+        color="#b6003b",
+        label="Extra economic value",
+    )
+    ax_left.axhline(0, color="#172033", linewidth=1)
+    ax_left.set_title("Test 4 - Marginal benefit of extra capacity", fontweight="bold")
+    ax_left.set_xlabel("Extra productive hours per day")
+    ax_left.set_ylabel("Extra scheduled boxes vs baseline")
+    ax_right.set_ylabel("Extra economic value vs baseline (EUR)")
+    ax_left.grid(True, alpha=0.25)
+
+    lines_left, labels_left = ax_left.get_legend_handles_labels()
+    lines_right, labels_right = ax_right.get_legend_handles_labels()
+    ax_left.legend(lines_left + lines_right, labels_left + labels_right, fontsize=8)
+    fig.tight_layout()
+    fig.savefig(plots_dir / "test4_marginal_benefit_extra_capacity.png", dpi=180)
+    plt.close(fig)
+
+
+def plot_test4_extension_curves(test_4, plots_dir):
+    plot_df = test_4.sort_values("mean_extra_hours_per_day").copy()
+    fig, axes = plt.subplots(2, 2, figsize=(11, 7.2), sharex=True)
+    metrics = [
+        ("mean_box_fulfilment_rate_pct", "Box fulfilment rate", "Box fulfilment rate (%)"),
+        ("mean_postponed_boxes", "Postponed boxes", "Boxes"),
+        ("mean_operator_utilisation_min", "Operator use", "Operator-minutes"),
+        ("mean_setup_time_min", "Setup time", "Minutes"),
+    ]
+    for ax, (metric_col, title, y_label) in zip(axes.flat, metrics):
+        ax.plot(
+            plot_df["mean_extra_hours_per_day"],
+            plot_df[metric_col],
+            marker="o",
+            linewidth=2.2,
+            color="#153e7e",
+        )
+        ax.set_title(title, fontweight="bold", fontsize=10)
+        ax.set_ylabel(y_label)
+        ax.grid(True, alpha=0.25)
+
+    for ax in axes[-1]:
+        ax.set_xlabel("Extra productive hours per day")
+
+    fig.suptitle("Test 4 - Operational response to extra capacity", fontweight="bold")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.savefig(plots_dir / "test4_shift_extension_curves.png", dpi=180)
     plt.close(fig)
 
 
@@ -808,7 +960,7 @@ def plot_test4_daily_capacity_utilisation(test_4_shift, plots_dir):
     fig, ax = plt.subplots(figsize=(10, 5.2))
 
     baseline = daily[
-        (daily["scenario"] == "one_shift_baseline")
+        (daily["scenario"] == "baseline_0h")
         & (daily["shift"] == 1)
     ].sort_values("calendar_day")
     if not baseline.empty:
@@ -819,11 +971,11 @@ def plot_test4_daily_capacity_utilisation(test_4_shift, plots_dir):
             linewidth=2.2,
             color="#153e7e",
             linestyle="-",
-            label="One shift baseline - shift 1",
+            label="Baseline - shift 1",
         )
 
     two_shift_1 = daily[
-        (daily["scenario"] == "two_shift_slots")
+        (daily["scenario"] == "full_second_shift")
         & (daily["shift"] == 1)
     ].sort_values("calendar_day")
     if not two_shift_1.empty:
@@ -834,11 +986,11 @@ def plot_test4_daily_capacity_utilisation(test_4_shift, plots_dir):
             linewidth=2,
             color="#153e7e",
             linestyle="--",
-            label="Two-shift scenario - shift 1",
+            label="Full second shift scenario - shift 1",
         )
 
     two_shift_2 = daily[
-        (daily["scenario"] == "two_shift_slots")
+        (daily["scenario"] == "full_second_shift")
         & (daily["shift"] == 2)
     ].sort_values("calendar_day")
     if not two_shift_2.empty:
@@ -849,7 +1001,7 @@ def plot_test4_daily_capacity_utilisation(test_4_shift, plots_dir):
             linewidth=2,
             color="#b6003b",
             linestyle="--",
-            label="Two-shift scenario - shift 2",
+            label="Full second shift scenario - shift 2",
         )
 
     ax.set_title("Test 4 - Daily capacity utilisation by shift", fontweight="bold")
@@ -986,7 +1138,10 @@ def generate_plots(output_dir):
     )
     if test_4 is not None:
         plot_test4_normalised_comparison(test_4, plots_dir)
-        plot_test4_shift_metric_panels(test_4, plots_dir)
+        if "mean_extra_hours_per_day" in test_4.columns:
+            plot_test4_shift_metric_panels(test_4, plots_dir)
+            plot_test4_marginal_benefit(test_4, plots_dir)
+            plot_test4_extension_curves(test_4, plots_dir)
         plot_grouped_bars(test_4, "scenario", ["mean_fitness", "mean_postponed_boxes", "mean_box_fulfilment_rate_pct"], plots_dir / "test_4_scenario_comparison.png", "Test 4 - Scenario comparison", "Mean value")
         shift_cols = [
             col
@@ -1013,7 +1168,7 @@ def generate_plots(output_dir):
     test_4_shift = read_optional_csv(output_dir / "test_4_shift_structure_per_day_shift_utilisation.csv")
     if test_4_shift is not None:
         plot_test4_daily_capacity_utilisation(test_4_shift, plots_dir)
-        two_shift = test_4_shift[test_4_shift["scenario"] == "two_shift_slots"].copy()
+        two_shift = test_4_shift[test_4_shift["scenario"] == "full_second_shift"].copy()
         if not two_shift.empty:
             plot_heatmap(two_shift, "calendar_day", "shift", "capacity_utilisation_pct", plots_dir / "test_4_daily_shift_capacity_heatmap.png", "Test 4 - Daily capacity utilisation by shift", "Capacity utilisation (%)")
             plot_heatmap(two_shift, "calendar_day", "shift", "avg_operators_used", plots_dir / "test_4_daily_shift_avg_operators_heatmap.png", "Test 4 - Daily average operators by shift", "Average operators")
