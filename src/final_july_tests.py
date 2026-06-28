@@ -563,14 +563,14 @@ def plot_heatmap(df, index_col, column_col, value_col, path, title, cbar_label):
     plt.close(fig)
 
 
-def plot_test3_weight_profiles(test_3, plots_dir):
+def plot_test3_weight_profiles(test_3, plots_dir, raw_test_3=None):
     metrics = [
-        ("mean_fitness", "Fitness", "Mean fitness"),
-        ("mean_fulfilment_rate_pct", "Fulfilment rate", "Fulfilment rate (%)"),
-        ("mean_postponed_orders", "Postponed orders", "Mean postponed orders"),
-        ("mean_scheduled_economic_value_eur", "Scheduled economic value", "Scheduled value (EUR)"),
-        ("mean_setup_time_min", "Setup time", "Setup time (min)"),
-        ("mean_operator_utilisation_min", "Operator utilisation", "Operator-minutes"),
+        ("fitness", "mean_fitness", "Fitness", "Fitness"),
+        ("fulfilment_rate_pct", "mean_fulfilment_rate_pct", "Fulfilment rate", "Fulfilment Rate (%)"),
+        ("postponed_orders", "mean_postponed_orders", "Postponed orders", "Postponed Orders"),
+        ("scheduled_economic_value_eur", "mean_scheduled_economic_value_eur", "Economic value", "Revenue Produced (EUR)"),
+        ("setup_time_min", "mean_setup_time_min", "Setup time", "Total Setup Time (min)"),
+        ("operator_utilisation_min", "mean_operator_utilisation_min", "Operator use", "Operator-minutes"),
     ]
 
     for weight_name in WEIGHT_NAMES:
@@ -582,38 +582,57 @@ def plot_test3_weight_profiles(test_3, plots_dir):
         if weight_df.empty:
             continue
 
-        fig, axes = plt.subplots(2, 3, figsize=(14, 7.5), sharex=True)
+        raw_weight = None
+        if raw_test_3 is not None:
+            raw_weight = raw_test_3[raw_test_3["weight_name"] == weight_name].copy()
+
+        fig, axes = plt.subplots(1, 6, figsize=(24, 4.8), sharex=True)
         default_value = DEFAULT_NORMALISED_WEIGHTS.get(weight_name, 0)
 
-        for ax, (metric_col, title, y_label) in zip(axes.flat, metrics):
+        for ax, (raw_col, mean_col, title, y_label) in zip(axes.flat, metrics):
+            x_values = weight_df["tested_weight_value"]
+            y_values = weight_df[mean_col]
             ax.plot(
-                weight_df["tested_weight_value"],
-                weight_df[metric_col],
+                x_values,
+                y_values,
                 marker="o",
-                linewidth=2,
-                color="#153e7e",
+                linewidth=2.4,
+                color="#1f77b4",
             )
+            if raw_weight is not None and raw_col in raw_weight.columns:
+                spread = (
+                    raw_weight
+                    .groupby("tested_weight_value")[raw_col]
+                    .agg(["min", "max"])
+                    .reindex(x_values)
+                    .reset_index()
+                )
+                ax.fill_between(
+                    spread["tested_weight_value"].astype(float).to_numpy(),
+                    spread["min"].astype(float).to_numpy(),
+                    spread["max"].astype(float).to_numpy(),
+                    color="#1f77b4",
+                    alpha=0.18,
+                    linewidth=0,
+                )
             ax.axvline(
                 default_value,
                 color="#b6003b",
                 linestyle="--",
-                linewidth=1.8,
-                label=f"Default = {default_value:.3f}",
+                linewidth=1.4,
             )
-            ax.set_title(title, fontweight="bold", fontsize=10)
-            ax.set_xlabel("Tested weight value")
+            ax.set_title(title, fontweight="bold", fontsize=11)
+            ax.set_xlabel("Weight value")
             ax.set_ylabel(y_label)
             ax.set_xlim(0, 1)
-            ax.grid(True, alpha=0.25)
+            ax.grid(True, linestyle="--", alpha=0.25)
 
-        handles, labels = axes.flat[0].get_legend_handles_labels()
-        fig.legend(handles, labels, loc="upper right", frameon=False)
         fig.suptitle(
-            f"Test 3 - {WEIGHT_LABELS.get(weight_name, weight_name)} weight profile",
+            f"Test 3 - Sensitivity to {WEIGHT_LABELS.get(weight_name, weight_name)} weight",
             fontweight="bold",
-            fontsize=14,
+            fontsize=15,
         )
-        fig.tight_layout(rect=[0, 0, 0.96, 0.94])
+        fig.tight_layout(rect=[0, 0, 1, 0.9])
         fig.savefig(plots_dir / f"test3_weight_profile_{weight_name}.png", dpi=180)
         plt.close(fig)
 
@@ -729,6 +748,55 @@ def plot_test4_normalised_comparison(test_4, plots_dir):
     plt.close(fig)
 
 
+def plot_test4_shift_metric_panels(test_4, plots_dir):
+    metrics = [
+        ("mean_fulfilment_rate_pct", "Fulfilment rate", "Fulfilment rate (%)"),
+        ("mean_postponed_orders", "Postponed orders", "Orders"),
+        ("mean_scheduled_economic_value_eur", "Economic value", "EUR"),
+        ("mean_setup_time_min", "Setup time", "Minutes"),
+        ("mean_operator_utilisation_min", "Operator utilisation", "Operator-minutes"),
+        ("mean_avg_capacity_utilisation_shift_2_pct", "Second-shift capacity use", "Utilisation (%)"),
+    ]
+    scenario_order = ["one_shift_baseline", "two_shift_slots"]
+    labels = ["1 shift", "2 shifts"]
+    colors = ["#153e7e", "#b6003b"]
+
+    fig, axes = plt.subplots(2, 3, figsize=(14, 7.5))
+    for ax, (metric_col, title, y_label) in zip(axes.flat, metrics):
+        values = []
+        for scenario in scenario_order:
+            rows = test_4[test_4["scenario"] == scenario]
+            values.append(float(rows.iloc[0].get(metric_col, 0)) if not rows.empty else 0)
+
+        bars = ax.bar(labels, values, color=colors, width=0.58)
+        ax.set_title(title, fontweight="bold", fontsize=10)
+        ax.set_ylabel(y_label)
+        ax.grid(axis="y", linestyle="--", alpha=0.25)
+
+        baseline_value = values[0]
+        two_shift_value = values[1]
+        if baseline_value != 0:
+            change = (two_shift_value - baseline_value) / abs(baseline_value) * 100
+            ax.text(
+                bars[1].get_x() + bars[1].get_width() / 2,
+                bars[1].get_height(),
+                f"{change:+.1f}%",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                fontweight="bold",
+            )
+
+    fig.suptitle(
+        "Test 4 - Shift structure impact across operational KPIs",
+        fontweight="bold",
+        fontsize=14,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.savefig(plots_dir / "test4_shift_metric_panels.png", dpi=180)
+    plt.close(fig)
+
+
 def plot_test4_daily_capacity_utilisation(test_4_shift, plots_dir):
     daily = (
         test_4_shift.groupby(["scenario", "calendar_day", "shift"])["capacity_utilisation_pct"]
@@ -841,7 +909,8 @@ def generate_plots(output_dir):
     test_3 = combine_weight_csvs(output_dir, "summary")
     if test_3 is not None:
         test_3 = test_3.sort_values(["weight_name", "tested_weight_value"])
-        plot_test3_weight_profiles(test_3, plots_dir)
+        raw_test_3 = combine_weight_csvs(output_dir, "raw")
+        plot_test3_weight_profiles(test_3, plots_dir, raw_test_3=raw_test_3)
         plot_test3_fulfilment_heatmap(test_3, plots_dir)
         plot_test3_sensitivity_range(test_3, plots_dir)
         metric_plots = [
@@ -860,6 +929,7 @@ def generate_plots(output_dir):
     test_4 = read_optional_csv(output_dir / "test_4_shift_structure_summary.csv")
     if test_4 is not None:
         plot_test4_normalised_comparison(test_4, plots_dir)
+        plot_test4_shift_metric_panels(test_4, plots_dir)
         plot_grouped_bars(test_4, "scenario", ["mean_fitness", "mean_postponed_orders", "mean_fulfilment_rate_pct"], plots_dir / "test_4_scenario_comparison.png", "Test 4 - Scenario comparison", "Mean value")
         shift_cols = [
             col
