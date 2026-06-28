@@ -1,0 +1,56 @@
+name: Collect Final July Test Results
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Run ID from the failed Final July Scenario Tests workflow"
+        required: true
+        type: string
+
+jobs:
+  collect-results:
+    name: "Collect existing final July artifacts"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install plotting dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download artifacts from source run
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.source_run_id }}
+          path: final_july_tests_artifacts
+
+      - name: Reorganize CSVs
+        run: |
+          mkdir -p final_july_tests_final
+          find final_july_tests_artifacts -name "*.csv" -exec cp {} final_july_tests_final/ \;
+          test -f final_july_tests_final/test_1_demand_scaling_summary.csv
+          test -f final_july_tests_final/test_2_operator_availability_summary.csv
+          test -f final_july_tests_final/test_4_shift_structure_summary.csv
+          for i in 0 1 2 3 4 5; do
+            test -f final_july_tests_final/test_3_weight_sensitivity_summary_weight_${i}.csv
+          done
+
+      - name: Generate final figures
+        run: >
+          python src/final_july_tests.py
+          --plots-only
+          --output-dir final_july_tests_final
+
+      - name: Upload combined results package
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-july-tests-all-results-from-run-${{ inputs.source_run_id }}
+          path: final_july_tests_final/
