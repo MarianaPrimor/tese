@@ -2,10 +2,23 @@ name: Final July Scenario Tests
 
 on:
   workflow_dispatch:
+    inputs:
+      test_to_run:
+        description: "Which test to run"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - "1"
+          - "2"
+          - "3"
+          - "4"
 
 jobs:
   test-1-demand-scaling:
     name: "Test 1 - Demand scaling"
+    if: ${{ github.event.inputs.test_to_run == 'all' || github.event.inputs.test_to_run == '1' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -38,6 +51,7 @@ jobs:
 
   test-2-operator-availability:
     name: "Test 2 - Operator availability"
+    if: ${{ github.event.inputs.test_to_run == 'all' || github.event.inputs.test_to_run == '2' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -70,6 +84,7 @@ jobs:
 
   test-3-weight-sensitivity:
     name: "Test 3 - Weight ${{ matrix.weight_index }}"
+    if: ${{ github.event.inputs.test_to_run == 'all' || github.event.inputs.test_to_run == '3' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
@@ -106,7 +121,8 @@ jobs:
             src/outputs/final_july_tests/test_3_weight_sensitivity_summary_weight_${{ matrix.weight_index }}.csv
 
   test-4-shift-structure:
-    name: "Test 4 - Shift structure"
+    name: "Test 4 - Shift extension"
+    if: ${{ github.event.inputs.test_to_run == 'all' || github.event.inputs.test_to_run == '4' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -140,6 +156,7 @@ jobs:
 
   collect-results:
     name: "Collect final July test outputs"
+    if: ${{ always() && !cancelled() }}
     needs:
       - test-1-demand-scaling
       - test-2-operator-availability
