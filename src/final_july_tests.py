@@ -208,6 +208,7 @@ def extract_kpis(metrics, instance):
     return {
         "fitness": metrics.get("normalised_fitness"),
         "postponed_orders": postponed_orders,
+        "postponed_boxes": postponed_boxes,
         "fulfilment_rate_pct": (
             (total_orders - postponed_orders) / total_orders * 100
             if total_orders
@@ -301,6 +302,7 @@ def summarise(rows, group_columns):
     metric_columns = [
         "fitness",
         "postponed_orders",
+        "postponed_boxes",
         "fulfilment_rate_pct",
         "box_fulfilment_rate_pct",
         "scheduled_kg",
@@ -566,8 +568,8 @@ def plot_heatmap(df, index_col, column_col, value_col, path, title, cbar_label):
 def plot_test3_weight_profiles(test_3, plots_dir, raw_test_3=None):
     metrics = [
         ("fitness", "mean_fitness", "Fitness", "Fitness"),
-        ("fulfilment_rate_pct", "mean_fulfilment_rate_pct", "Fulfilment rate", "Fulfilment Rate (%)"),
-        ("postponed_orders", "mean_postponed_orders", "Postponed orders", "Postponed Orders"),
+        ("box_fulfilment_rate_pct", "mean_box_fulfilment_rate_pct", "Box fulfilment rate", "Box Fulfilment Rate (%)"),
+        ("postponed_boxes", "mean_postponed_boxes", "Postponed boxes", "Postponed Boxes"),
         ("scheduled_economic_value_eur", "mean_scheduled_economic_value_eur", "Economic value", "Revenue Produced (EUR)"),
         ("setup_time_min", "mean_setup_time_min", "Setup time", "Total Setup Time (min)"),
         ("operator_utilisation_min", "mean_operator_utilisation_min", "Operator use", "Operator-minutes"),
@@ -642,7 +644,7 @@ def plot_test3_fulfilment_heatmap(test_3, plots_dir):
         test_3.pivot_table(
             index="weight_name",
             columns="tested_weight_value",
-            values="mean_fulfilment_rate_pct",
+            values="mean_box_fulfilment_rate_pct",
             aggfunc="mean",
         )
         .reindex(WEIGHT_NAMES)
@@ -650,7 +652,7 @@ def plot_test3_fulfilment_heatmap(test_3, plots_dir):
     )
     fig, ax = plt.subplots(figsize=(10, 4.8))
     image = ax.imshow(pivot.values, aspect="auto", cmap="YlGnBu")
-    ax.set_title("Test 3 - Fulfilment rate heatmap", fontweight="bold")
+    ax.set_title("Test 3 - Box fulfilment rate heatmap", fontweight="bold")
     ax.set_xlabel("Tested weight value")
     ax.set_ylabel("Weight")
     ax.set_xticks(range(len(pivot.columns)))
@@ -658,7 +660,7 @@ def plot_test3_fulfilment_heatmap(test_3, plots_dir):
     ax.set_yticks(range(len(pivot.index)))
     ax.set_yticklabels([WEIGHT_LABELS.get(value, value) for value in pivot.index])
     cbar = fig.colorbar(image, ax=ax)
-    cbar.set_label("Fulfilment rate (%)")
+    cbar.set_label("Box fulfilment rate (%)")
     fig.tight_layout()
     fig.savefig(plots_dir / "test3_fulfilment_heatmap.png", dpi=180)
     plt.close(fig)
@@ -666,7 +668,7 @@ def plot_test3_fulfilment_heatmap(test_3, plots_dir):
 
 def plot_test3_sensitivity_range(test_3, plots_dir):
     ranges = (
-        test_3.groupby("weight_name")["mean_fulfilment_rate_pct"]
+        test_3.groupby("weight_name")["mean_box_fulfilment_rate_pct"]
         .agg(lambda values: values.max() - values.min())
         .reindex(WEIGHT_NAMES)
         .dropna()
@@ -676,8 +678,8 @@ def plot_test3_sensitivity_range(test_3, plots_dir):
     fig, ax = plt.subplots(figsize=(8, 4.8))
     labels = [WEIGHT_LABELS.get(weight, weight) for weight in ranges.index]
     bars = ax.barh(labels, ranges.values, color="#153e7e")
-    ax.set_title("Fulfilment Rate Sensitivity by Weight", fontweight="bold")
-    ax.set_xlabel("Fulfilment rate range (percentage points)")
+    ax.set_title("Box Fulfilment Rate Sensitivity by Weight", fontweight="bold")
+    ax.set_xlabel("Box fulfilment rate range (percentage points)")
     ax.grid(axis="x", alpha=0.25)
 
     for bar, value in zip(bars, ranges.values):
@@ -696,8 +698,8 @@ def plot_test3_sensitivity_range(test_3, plots_dir):
 
 def plot_test4_normalised_comparison(test_4, plots_dir):
     metrics = [
-        ("mean_fulfilment_rate_pct", "Fulfilment rate"),
-        ("mean_postponed_orders", "Postponed orders"),
+        ("mean_box_fulfilment_rate_pct", "Box fulfilment rate"),
+        ("mean_postponed_boxes", "Postponed boxes"),
         ("mean_scheduled_economic_value_eur", "Economic value"),
         ("mean_setup_time_min", "Setup time"),
         ("mean_operator_utilisation_min", "Operator utilisation"),
@@ -750,8 +752,8 @@ def plot_test4_normalised_comparison(test_4, plots_dir):
 
 def plot_test4_shift_metric_panels(test_4, plots_dir):
     metrics = [
-        ("mean_fulfilment_rate_pct", "Fulfilment rate", "Fulfilment rate (%)"),
-        ("mean_postponed_orders", "Postponed orders", "Orders"),
+        ("mean_box_fulfilment_rate_pct", "Box fulfilment rate", "Box fulfilment rate (%)"),
+        ("mean_postponed_boxes", "Postponed boxes", "Boxes"),
         ("mean_scheduled_economic_value_eur", "Economic value", "EUR"),
         ("mean_setup_time_min", "Setup time", "Minutes"),
         ("mean_operator_utilisation_min", "Operator utilisation", "Operator-minutes"),
@@ -885,38 +887,91 @@ def combine_weight_csvs(output_dir, kind):
     return combined
 
 
+def add_postponed_box_columns(df):
+    """Backfill postponed-box columns in older CSVs without rerunning the GA."""
+    if df is None:
+        return None
+
+    needs_mean = (
+        "mean_postponed_boxes" not in df.columns
+        and "mean_box_fulfilment_rate_pct" in df.columns
+    )
+    needs_raw = (
+        "postponed_boxes" not in df.columns
+        and "box_fulfilment_rate_pct" in df.columns
+    )
+    if not needs_mean and not needs_raw:
+        return df
+
+    try:
+        base_instance = load_july_instance(DEFAULT_INSTANCE_FILE, operators=20)
+    except Exception as exc:
+        print(f"WARNING: could not backfill postponed boxes: {exc}")
+        return df
+
+    base_boxes = total_demand_boxes(base_instance)
+    demand_boxes_by_factor = {
+        factor: total_demand_boxes(scale_demand(base_instance, factor))
+        for factor in DEMAND_FACTORS
+    }
+
+    def row_total_boxes(row):
+        if "demand_factor" in row and pd.notna(row["demand_factor"]):
+            return demand_boxes_by_factor.get(float(row["demand_factor"]), base_boxes)
+        return base_boxes
+
+    df = df.copy()
+    if needs_mean:
+        df["mean_postponed_boxes"] = df.apply(
+            lambda row: row_total_boxes(row)
+            * (1 - float(row["mean_box_fulfilment_rate_pct"]) / 100),
+            axis=1,
+        )
+    if needs_raw:
+        df["postponed_boxes"] = df.apply(
+            lambda row: row_total_boxes(row)
+            * (1 - float(row["box_fulfilment_rate_pct"]) / 100),
+            axis=1,
+        )
+    return df
+
+
 def generate_plots(output_dir):
     output_dir = pathlib.Path(output_dir)
     plots_dir = output_dir / "plots"
     plots_dir.mkdir(parents=True, exist_ok=True)
 
-    test_1 = read_optional_csv(output_dir / "test_1_demand_scaling_summary.csv")
+    test_1 = add_postponed_box_columns(
+        read_optional_csv(output_dir / "test_1_demand_scaling_summary.csv")
+    )
     if test_1 is not None:
         plot_line(test_1, "demand_factor", "mean_fitness", plots_dir / "test_1_fitness_by_demand.png", "Test 1 - Fitness by demand factor", "Demand factor", "Mean fitness")
-        plot_line(test_1, "demand_factor", "mean_postponed_orders", plots_dir / "test_1_postponed_by_demand.png", "Test 1 - Postponed orders by demand factor", "Demand factor", "Mean postponed orders")
-        plot_line(test_1, "demand_factor", "mean_fulfilment_rate_pct", plots_dir / "test_1_fulfilment_by_demand.png", "Test 1 - Fulfilment by demand factor", "Demand factor", "Fulfilment rate (%)")
+        plot_line(test_1, "demand_factor", "mean_postponed_boxes", plots_dir / "test_1_postponed_by_demand.png", "Test 1 - Postponed boxes by demand factor", "Demand factor", "Mean postponed boxes")
+        plot_line(test_1, "demand_factor", "mean_box_fulfilment_rate_pct", plots_dir / "test_1_fulfilment_by_demand.png", "Test 1 - Box fulfilment by demand factor", "Demand factor", "Box fulfilment rate (%)")
         plot_dual_axis(test_1, "demand_factor", "mean_scheduled_economic_value_eur", "mean_scheduled_kg", plots_dir / "test_1_value_kg_by_demand.png", "Test 1 - Scheduled value and kg by demand factor", "Demand factor", "Scheduled value (€)", "Scheduled kg")
         plot_dual_axis(test_1, "demand_factor", "mean_setup_time_min", "mean_operator_utilisation_min", plots_dir / "test_1_setup_operator_by_demand.png", "Test 1 - Setup and operator use by demand factor", "Demand factor", "Setup time (min)", "Operator-minutes")
 
-    test_2 = read_optional_csv(output_dir / "test_2_operator_availability_summary.csv")
+    test_2 = add_postponed_box_columns(
+        read_optional_csv(output_dir / "test_2_operator_availability_summary.csv")
+    )
     if test_2 is not None:
         plot_line(test_2, "operators", "mean_fitness", plots_dir / "test_2_fitness_by_operators.png", "Test 2 - Fitness by operators", "Operators", "Mean fitness")
-        plot_line(test_2, "operators", "mean_postponed_orders", plots_dir / "test_2_postponed_by_operators.png", "Test 2 - Postponed orders by operators", "Operators", "Mean postponed orders")
-        plot_line(test_2, "operators", "mean_fulfilment_rate_pct", plots_dir / "test_2_fulfilment_by_operators.png", "Test 2 - Fulfilment by operators", "Operators", "Fulfilment rate (%)")
+        plot_line(test_2, "operators", "mean_postponed_boxes", plots_dir / "test_2_postponed_by_operators.png", "Test 2 - Postponed boxes by operators", "Operators", "Mean postponed boxes")
+        plot_line(test_2, "operators", "mean_box_fulfilment_rate_pct", plots_dir / "test_2_fulfilment_by_operators.png", "Test 2 - Box fulfilment by operators", "Operators", "Box fulfilment rate (%)")
         plot_dual_axis(test_2, "operators", "mean_scheduled_economic_value_eur", "mean_scheduled_kg", plots_dir / "test_2_value_kg_by_operators.png", "Test 2 - Scheduled value and kg by operators", "Operators", "Scheduled value (€)", "Scheduled kg")
         plot_dual_axis(test_2, "operators", "mean_setup_time_min", "mean_operator_utilisation_min", plots_dir / "test_2_setup_operator_by_operators.png", "Test 2 - Setup and operator use by operators", "Operators", "Setup time (min)", "Operator-minutes")
 
-    test_3 = combine_weight_csvs(output_dir, "summary")
+    test_3 = add_postponed_box_columns(combine_weight_csvs(output_dir, "summary"))
     if test_3 is not None:
         test_3 = test_3.sort_values(["weight_name", "tested_weight_value"])
-        raw_test_3 = combine_weight_csvs(output_dir, "raw")
+        raw_test_3 = add_postponed_box_columns(combine_weight_csvs(output_dir, "raw"))
         plot_test3_weight_profiles(test_3, plots_dir, raw_test_3=raw_test_3)
         plot_test3_fulfilment_heatmap(test_3, plots_dir)
         plot_test3_sensitivity_range(test_3, plots_dir)
         metric_plots = [
             ("mean_fitness", "test_3_fitness_by_weight.png", "Test 3 - Fitness by tested weight", "Mean fitness"),
-            ("mean_postponed_orders", "test_3_postponed_by_weight.png", "Test 3 - Postponed orders by tested weight", "Mean postponed orders"),
-            ("mean_fulfilment_rate_pct", "test_3_fulfilment_by_weight.png", "Test 3 - Fulfilment by tested weight", "Fulfilment rate (%)"),
+            ("mean_postponed_boxes", "test_3_postponed_by_weight.png", "Test 3 - Postponed boxes by tested weight", "Mean postponed boxes"),
+            ("mean_box_fulfilment_rate_pct", "test_3_fulfilment_by_weight.png", "Test 3 - Box fulfilment by tested weight", "Box fulfilment rate (%)"),
             ("mean_scheduled_economic_value_eur", "test_3_value_by_weight.png", "Test 3 - Scheduled value by tested weight", "Scheduled value (€)"),
             ("mean_setup_time_min", "test_3_setup_by_weight.png", "Test 3 - Setup time by tested weight", "Setup time (min)"),
             ("mean_operator_utilisation_min", "test_3_operator_by_weight.png", "Test 3 - Operator use by tested weight", "Operator-minutes"),
@@ -924,13 +979,15 @@ def generate_plots(output_dir):
         for metric, filename, title, y_label in metric_plots:
             plot_line(test_3, "tested_weight_value", metric, plots_dir / filename, title, "Tested weight value", y_label, group_col="weight_name")
         plot_heatmap(test_3, "weight_name", "tested_weight_value", "mean_fitness", plots_dir / "test_3_weight_fitness_heatmap.png", "Test 3 - Fitness heatmap by weight and value", "Mean fitness")
-        plot_heatmap(test_3, "weight_name", "tested_weight_value", "mean_postponed_orders", plots_dir / "test_3_weight_postponed_heatmap.png", "Test 3 - Postponed orders heatmap by weight and value", "Mean postponed orders")
+        plot_heatmap(test_3, "weight_name", "tested_weight_value", "mean_postponed_boxes", plots_dir / "test_3_weight_postponed_heatmap.png", "Test 3 - Postponed boxes heatmap by weight and value", "Mean postponed boxes")
 
-    test_4 = read_optional_csv(output_dir / "test_4_shift_structure_summary.csv")
+    test_4 = add_postponed_box_columns(
+        read_optional_csv(output_dir / "test_4_shift_structure_summary.csv")
+    )
     if test_4 is not None:
         plot_test4_normalised_comparison(test_4, plots_dir)
         plot_test4_shift_metric_panels(test_4, plots_dir)
-        plot_grouped_bars(test_4, "scenario", ["mean_fitness", "mean_postponed_orders", "mean_fulfilment_rate_pct"], plots_dir / "test_4_scenario_comparison.png", "Test 4 - Scenario comparison", "Mean value")
+        plot_grouped_bars(test_4, "scenario", ["mean_fitness", "mean_postponed_boxes", "mean_box_fulfilment_rate_pct"], plots_dir / "test_4_scenario_comparison.png", "Test 4 - Scenario comparison", "Mean value")
         shift_cols = [
             col
             for col in ["mean_avg_capacity_utilisation_shift_1_pct", "mean_avg_capacity_utilisation_shift_2_pct"]
