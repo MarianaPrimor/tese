@@ -2,6 +2,11 @@ name: EDD Initialization Comparison
 
 on:
   workflow_dispatch:
+    inputs:
+      previous_run_id:
+        description: "Optional previous workflow run id containing ratio 0.0 and 1.0 artifacts"
+        required: false
+        default: ""
 
 jobs:
   run-combination:
@@ -11,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        heuristic_ratio: [0.0, 0.25, 0.50, 1.0]
+        heuristic_ratio: [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50]
         seed: [42, 43, 44]
 
     steps:
@@ -62,10 +67,24 @@ jobs:
         with:
           path: edd_initialization_artifacts
 
+      - name: Download previous ratio 0 and 1 artifacts
+        if: ${{ inputs.previous_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh run download ${{ inputs.previous_run_id }}
+          --name edd-initialization-comparison-results
+          --dir edd_initialization_previous
+
       - name: Reorganize CSVs
         run: |
           mkdir -p edd_initialization_final
-          find edd_initialization_artifacts -name "*.csv" -exec cp {} edd_initialization_final/ \;
+          if [ -d edd_initialization_artifacts ]; then
+            find edd_initialization_artifacts -name "*.csv" -exec cp {} edd_initialization_final/ \;
+          fi
+          if [ -d edd_initialization_previous ]; then
+            find edd_initialization_previous -name "*.csv" -exec cp {} edd_initialization_final/ \;
+          fi
 
       - name: Generate summary and figures
         run: >

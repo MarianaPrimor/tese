@@ -28,7 +28,15 @@ GA_PARAMETERS = {
 SEEDS = [42, 43, 44]
 CONFIGURATIONS = [
     ("random_0", 0.0),
+    ("edd_5", 0.05),
+    ("edd_10", 0.10),
+    ("edd_15", 0.15),
+    ("edd_20", 0.20),
     ("edd_25", 0.25),
+    ("edd_30", 0.30),
+    ("edd_35", 0.35),
+    ("edd_40", 0.40),
+    ("edd_45", 0.45),
     ("edd_50", 0.50),
     ("edd_100", 1.0),
 ]
@@ -207,6 +215,15 @@ def collect_existing_outputs(output_dir):
         raw_df = pd.concat(raw_frames, ignore_index=True)
         seed_summary_df = pd.concat(seed_frames, ignore_index=True)
 
+    raw_df = raw_df.drop_duplicates(
+        subset=["configuration", "heuristic_ratio", "seed", "generation"],
+        keep="last",
+    )
+    seed_summary_df = seed_summary_df.drop_duplicates(
+        subset=["configuration", "heuristic_ratio", "seed"],
+        keep="last",
+    )
+
     summary_df = summarize_seed_results(seed_summary_df)
     raw_df.to_csv(raw_path, index=False, encoding="utf-8-sig")
     seed_summary_df.to_csv(seed_path, index=False, encoding="utf-8-sig")
@@ -256,20 +273,24 @@ def plot_convergence(raw_df, output_dir):
     )
 
     fig, ax = plt.subplots(figsize=(10, 5.8))
-    colors = {
-        "random_0": "#153e7e",
-        "edd_25": "#2f7d32",
-        "edd_50": "#f59e0b",
-        "edd_100": "#b6003b",
+    configurations = (
+        grouped[["configuration", "heuristic_ratio"]]
+        .drop_duplicates()
+        .sort_values("heuristic_ratio")
+    )
+    cmap = plt.get_cmap("viridis")
+    color_by_configuration = {
+        row.configuration: cmap(index / max(len(configurations) - 1, 1))
+        for index, row in enumerate(configurations.itertuples(index=False))
     }
 
-    for configuration, config_df in grouped.groupby("configuration"):
+    for configuration, config_df in grouped.groupby("configuration", sort=False):
         config_df = config_df.sort_values("generation")
         x = config_df["generation"].to_numpy()
         y = config_df["mean"].to_numpy()
         std = config_df["std"].fillna(0).to_numpy()
         label = configuration.replace("_", " ")
-        color = colors.get(configuration, "#172033")
+        color = color_by_configuration.get(configuration, "#172033")
 
         ax.plot(x, y, linewidth=2.2, color=color, label=label)
         ax.fill_between(x, y - std, y + std, color=color, alpha=0.16)
@@ -285,8 +306,16 @@ def plot_convergence(raw_df, output_dir):
 
 
 def plot_summary(seed_summary_df, output_dir):
-    order = [configuration for configuration, _ in CONFIGURATIONS]
-    labels = ["Random", "EDD 25%", "EDD 50%", "EDD 100%"]
+    available = (
+        seed_summary_df[["configuration", "heuristic_ratio"]]
+        .drop_duplicates()
+        .sort_values("heuristic_ratio")
+    )
+    order = available["configuration"].tolist()
+    labels = [
+        "Random" if ratio == 0 else f"EDD {int(round(ratio * 100))}%"
+        for ratio in available["heuristic_ratio"]
+    ]
 
     final_data = [
         seed_summary_df.loc[
@@ -323,6 +352,245 @@ def plot_summary(seed_summary_df, output_dir):
     plt.close(fig)
 
 
+def plot_ratio_response(seed_summary_df, output_dir):
+    summary_df = summarize_seed_results(seed_summary_df).sort_values("heuristic_ratio")
+    x = (summary_df["heuristic_ratio"] * 100).to_numpy()
+
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    axes = axes.ravel()
+
+    y = summary_df["mean_final_best_fitness"].to_numpy()
+    std = summary_df["std_final_best_fitness"].fillna(0).to_numpy()
+    axes[0].plot(x, y, marker="o", linewidth=2.4, color="#174A8B")
+    axes[0].fill_between(x, y - std, y + std, color="#174A8B", alpha=0.16)
+    axes[0].set_title("Final fitness by EDD share", fontweight="bold")
+    axes[0].set_ylabel("Mean final fitness")
+
+    axes[1].plot(
+        x,
+        summary_df["mean_first_best_generation"],
+        marker="o",
+        linewidth=2.4,
+        color="#0F8B5F",
+    )
+    axes[1].set_title("Speed of convergence", fontweight="bold")
+    axes[1].set_ylabel("Generation where best was first reached")
+
+    axes[2].plot(
+        x,
+        summary_df["mean_total_generations_run"],
+        marker="o",
+        linewidth=2.4,
+        color="#C2410C",
+    )
+    axes[2].set_title("Mean generations run", fontweight="bold")
+    axes[2].set_xlabel("EDD chromosomes in initial population (%)")
+    axes[2].set_ylabel("Generations")
+
+    axes[3].bar(
+        x,
+        std,
+        width=3.6,
+        color="#7C3AED",
+        alpha=0.85,
+    )
+    axes[3].set_title("Robustness across seeds", fontweight="bold")
+    axes[3].set_xlabel("EDD chromosomes in initial population (%)")
+    axes[3].set_ylabel("Std. dev. of final fitness")
+
+    for ax in axes:
+        ax.grid(True, alpha=0.24)
+        ax.set_xticks(x)
+        ax.tick_params(axis="x", rotation=45)
+
+    fig.suptitle("Effect of EDD initialization proportion", fontweight="bold", fontsize=15)
+    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.savefig(output_dir / "edd_initialization_ratio_response.png", dpi=190)
+    plt.close(fig)
+
+
+def plot_main_comparison(seed_summary_df, output_dir):
+    summary_df = summarize_seed_results(seed_summary_df).sort_values("heuristic_ratio")
+    x = (summary_df["heuristic_ratio"] * 100).to_numpy()
+    y = summary_df["mean_final_best_fitness"].to_numpy()
+    std = summary_df["std_final_best_fitness"].fillna(0).to_numpy()
+    convergence_generation = summary_df["mean_first_best_generation"].to_numpy()
+    best_index = y.argmin()
+    best_x = x[best_index]
+    best_y = y[best_index]
+
+    fig, ax = plt.subplots(figsize=(11.5, 6.4))
+    ax.plot(
+        x,
+        y,
+        marker="o",
+        markersize=7,
+        linewidth=2.8,
+        color="#174A8B",
+        label="Mean final fitness",
+    )
+    ax.fill_between(
+        x,
+        y - std,
+        y + std,
+        color="#174A8B",
+        alpha=0.17,
+        label="Variation across seeds",
+    )
+    ax.scatter(
+        [best_x],
+        [best_y],
+        s=210,
+        marker="*",
+        color="#F59E0B",
+        edgecolor="#172033",
+        linewidth=0.9,
+        zorder=5,
+        label=f"Best mean fitness ({best_x:.0f}% EDD)",
+    )
+
+    ax2 = ax.twinx()
+    ax2.plot(
+        x,
+        convergence_generation,
+        marker="s",
+        markersize=5,
+        linewidth=1.9,
+        linestyle="--",
+        color="#0F8B5F",
+        label="Mean first-best generation",
+    )
+
+    ax.set_title(
+        "EDD Initialisation Proportion Comparison",
+        fontweight="bold",
+        fontsize=16,
+    )
+    ax.set_xlabel("EDD chromosomes in initial population (%)")
+    ax.set_ylabel("Mean final fitness")
+    ax2.set_ylabel("Mean generation where best fitness was first reached")
+    ax.set_xticks(x)
+    ax.tick_params(axis="x", rotation=45)
+    ax.grid(True, axis="y", alpha=0.25)
+
+    lines, labels = ax.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax.legend(
+        lines + lines2,
+        labels + labels2,
+        loc="best",
+        frameon=True,
+    )
+
+    best_label = (
+        f"Best: {best_x:.0f}% EDD\n"
+        f"fitness = {best_y:.4f}"
+    )
+    ax.annotate(
+        best_label,
+        xy=(best_x, best_y),
+        xytext=(best_x, best_y + (max(y) - min(y)) * 0.20 if max(y) > min(y) else best_y),
+        arrowprops={"arrowstyle": "->", "color": "#172033", "lw": 1.1},
+        ha="center",
+        bbox={"boxstyle": "round,pad=0.35", "fc": "white", "ec": "#CBD5E1"},
+    )
+
+    fig.tight_layout()
+    fig.savefig(output_dir / "edd_initialization_main_comparison.png", dpi=200)
+    plt.close(fig)
+
+
+def plot_seed_scatter(seed_summary_df, output_dir):
+    fig, ax = plt.subplots(figsize=(10.5, 5.8))
+    ratios = sorted(seed_summary_df["heuristic_ratio"].unique())
+    positions = [ratio * 100 for ratio in ratios]
+
+    data = [
+        seed_summary_df.loc[
+            seed_summary_df["heuristic_ratio"] == ratio,
+            "final_best_fitness",
+        ].tolist()
+        for ratio in ratios
+    ]
+    ax.boxplot(
+        data,
+        positions=positions,
+        widths=3.4,
+        patch_artist=True,
+        boxprops={"facecolor": "#DBEAFE", "edgecolor": "#174A8B"},
+        medianprops={"color": "#B6003B", "linewidth": 2},
+        whiskerprops={"color": "#174A8B"},
+        capprops={"color": "#174A8B"},
+    )
+
+    seed_colors = {42: "#174A8B", 43: "#0F8B5F", 44: "#C2410C"}
+    for seed, seed_df in seed_summary_df.groupby("seed"):
+        seed_df = seed_df.sort_values("heuristic_ratio")
+        ax.plot(
+            seed_df["heuristic_ratio"] * 100,
+            seed_df["final_best_fitness"],
+            marker="o",
+            linewidth=1.4,
+            alpha=0.72,
+            label=f"Seed {seed}",
+            color=seed_colors.get(seed, "#172033"),
+        )
+
+    ax.set_title("Final fitness distribution by initialization strategy", fontweight="bold")
+    ax.set_xlabel("EDD chromosomes in initial population (%)")
+    ax.set_ylabel("Final best fitness")
+    ax.set_xticks(positions)
+    ax.tick_params(axis="x", rotation=45)
+    ax.grid(axis="y", alpha=0.25)
+    ax.legend(title="Individual runs")
+    fig.tight_layout()
+    fig.savefig(output_dir / "edd_initialization_seed_distribution.png", dpi=190)
+    plt.close(fig)
+
+
+def plot_convergence_heatmap(raw_df, output_dir):
+    full_df = make_full_generation_grid(raw_df)
+    mean_df = (
+        full_df
+        .groupby(["heuristic_ratio", "generation"], as_index=False)["best_fitness"]
+        .mean()
+    )
+    pivot = mean_df.pivot(
+        index="heuristic_ratio",
+        columns="generation",
+        values="best_fitness",
+    ).sort_index()
+
+    fig, ax = plt.subplots(figsize=(11, 6.2))
+    image = ax.imshow(
+        pivot.to_numpy(),
+        aspect="auto",
+        interpolation="nearest",
+        cmap="Blues_r",
+    )
+    ax.set_title("Convergence heatmap by EDD initialization proportion", fontweight="bold")
+    ax.set_xlabel("Generation")
+    ax.set_ylabel("EDD chromosomes in initial population (%)")
+    ax.set_yticks(range(len(pivot.index)))
+    ax.set_yticklabels([f"{ratio * 100:.0f}%" for ratio in pivot.index])
+
+    generations = list(pivot.columns)
+    if generations:
+        tick_count = min(8, len(generations))
+        tick_positions = [
+            round(i * (len(generations) - 1) / max(tick_count - 1, 1))
+            for i in range(tick_count)
+        ]
+        ax.set_xticks(tick_positions)
+        ax.set_xticklabels([str(generations[pos]) for pos in tick_positions])
+
+    cbar = fig.colorbar(image, ax=ax)
+    cbar.set_label("Mean best fitness")
+    fig.tight_layout()
+    fig.savefig(output_dir / "edd_initialization_convergence_heatmap.png", dpi=190)
+    plt.close(fig)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Compare random and EDD-hybrid initialization strategies."
@@ -347,6 +615,10 @@ def main():
         raw_df, _summary_df, seed_summary_df = collect_existing_outputs(output_dir)
         plot_convergence(raw_df, output_dir)
         plot_summary(seed_summary_df, output_dir)
+        plot_main_comparison(seed_summary_df, output_dir)
+        plot_ratio_response(seed_summary_df, output_dir)
+        plot_seed_scatter(seed_summary_df, output_dir)
+        plot_convergence_heatmap(raw_df, output_dir)
         print(f"Wrote EDD initialization comparison figures to {output_dir}")
         return
 
@@ -368,6 +640,10 @@ def main():
 
     plot_convergence(raw_df, output_dir)
     plot_summary(seed_summary_df, output_dir)
+    plot_main_comparison(seed_summary_df, output_dir)
+    plot_ratio_response(seed_summary_df, output_dir)
+    plot_seed_scatter(seed_summary_df, output_dir)
+    plot_convergence_heatmap(raw_df, output_dir)
     print(f"Wrote EDD initialization comparison outputs to {output_dir}")
 
 
