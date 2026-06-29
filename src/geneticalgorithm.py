@@ -54,6 +54,41 @@ def generate_initial_population(
     return population
 
 
+def get_locked_orders(instance):
+    locked_orders = {}
+
+    for key, value in (instance.get("locked_orders") or {}).items():
+        try:
+            order_id = int(key)
+        except (TypeError, ValueError):
+            continue
+
+        locked_orders[order_id] = dict(value or {})
+
+    return locked_orders
+
+
+def apply_locked_orders(solution, instance):
+    locked_orders = get_locked_orders(instance)
+
+    if not locked_orders:
+        return solution
+
+    for gene in solution:
+        order_id = gene.get("order_id")
+
+        if order_id not in locked_orders:
+            continue
+
+        locked = locked_orders[order_id]
+        gene["day"] = locked.get("day")
+        gene["line"] = locked.get("line")
+        gene["postponed"] = bool(locked.get("postponed", False))
+        gene["locked"] = True
+
+    return solution
+
+
 def generate_edd_solution(instance, seed=42):
     rng = random.Random(seed)
     refs_by_id = create_refs_by_id(instance)
@@ -121,7 +156,7 @@ def generate_edd_solution(instance, seed=42):
     if skipped_orders > 0:
         print(f"WARNING: skipped {skipped_orders} demand orders.")
 
-    return solution
+    return apply_locked_orders(solution, instance)
 
 
 
@@ -180,6 +215,7 @@ def enforce_hard_constraints(
 ):
     refs_by_id = create_refs_by_id(instance)
     repaired_solution = deepcopy(solution)
+    repaired_solution = apply_locked_orders(repaired_solution, instance)
     max_values = compute_max_values(instance)
     weights = (
         DEFAULT_NORMALISED_WEIGHTS
@@ -201,9 +237,14 @@ def enforce_hard_constraints(
         valid_days = get_valid_days_for_ref(instance, ref)
 
         if gene.get("postponed") or not valid_lines or not valid_days:
+            if gene.get("locked") and not gene.get("postponed"):
+                continue
             gene["line"] = None
             gene["day"] = None
             gene["postponed"] = True
+            continue
+
+        if gene.get("locked"):
             continue
 
         if gene.get("line") not in valid_lines:
@@ -437,6 +478,9 @@ def repair_capacity_constraints(solution, instance, max_values, weights):
             candidates = []
 
             for index, gene in enumerate(genes):
+                if gene.get("locked"):
+                    continue
+
                 ref_id = str(gene.get("ref_id")).strip()
                 ref = refs_by_id.get(ref_id)
 
@@ -462,6 +506,9 @@ def repair_capacity_constraints(solution, instance, max_values, weights):
                     postponement_cost / freed_time,
                     index,
                 ))
+
+            if not candidates:
+                break
 
             _, selected_index = min(candidates)
             selected_gene = genes.pop(selected_index)
@@ -525,7 +572,7 @@ def repair_operator_constraints(solution, instance, max_values, weights):
             order_id = gene.get("order_id")
             relief = relief_by_order.get(order_id, 0)
 
-            if gene.get("postponed") or relief <= 0:
+            if gene.get("locked") or gene.get("postponed") or relief <= 0:
                 continue
 
             ref = refs_by_id.get(str(gene.get("ref_id")).strip())
@@ -573,7 +620,7 @@ def reinsert_postponed_orders(solution, instance, max_values, weights):
         postponed_genes = sorted(
             (
                 gene for gene in repaired_solution
-                if gene.get("postponed")
+                if gene.get("postponed") and not gene.get("locked")
             ),
             key=lambda gene: (
                 gene.get("delivery_date") or instance["n_days"] + 1,
