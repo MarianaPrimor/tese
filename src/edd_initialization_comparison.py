@@ -26,20 +26,11 @@ GA_PARAMETERS = {
     "stagnation_k": 26,
 }
 SEEDS = [42, 43, 44]
-CONFIGURATIONS = [
-    ("random_0", 0.0),
-    ("edd_5", 0.05),
-    ("edd_10", 0.10),
-    ("edd_15", 0.15),
-    ("edd_20", 0.20),
-    ("edd_25", 0.25),
-    ("edd_30", 0.30),
-    ("edd_35", 0.35),
-    ("edd_40", 0.40),
-    ("edd_45", 0.45),
-    ("edd_50", 0.50),
-    ("edd_100", 1.0),
-]
+CONFIGURATIONS = (
+    [("random_0", 0.0)]
+    + [(f"edd_{ratio}", ratio / 100) for ratio in range(5, 51)]
+    + [("edd_100", 1.0)]
+)
 CONFIGURATION_BY_RATIO = {
     ratio: configuration
     for configuration, ratio in CONFIGURATIONS
@@ -122,7 +113,7 @@ def run_single_configuration(instance, output_dir, heuristic_ratio, seed):
 
 
 def summarize_seed_results(seed_summary_df):
-    return (
+    summary_df = (
         seed_summary_df
         .groupby(["configuration", "heuristic_ratio"], as_index=False)
         .agg(
@@ -132,6 +123,10 @@ def summarize_seed_results(seed_summary_df):
             mean_total_generations_run=("total_generations_run", "mean"),
         )
     )
+    summary_df["std_final_best_fitness"] = summary_df[
+        "std_final_best_fitness"
+    ].fillna(0.0)
+    return summary_df
 
 
 def run_comparison(instance, output_dir):
