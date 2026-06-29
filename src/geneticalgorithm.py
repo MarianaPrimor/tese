@@ -33,12 +33,17 @@ def generate_initial_population(
     population_size=200,
     seed=0,
     objective_weights=None,
+    heuristic_ratio=0.0,
 ):
     population = []
+    heuristic_count = int(round(population_size * max(0.0, min(1.0, heuristic_ratio))))
 
     for i in range(population_size):
         solution_seed = seed * 100000 + i
-        solution = generate_random_solution(instance, seed=solution_seed)
+        if i < heuristic_count:
+            solution = generate_edd_solution(instance, seed=solution_seed)
+        else:
+            solution = generate_random_solution(instance, seed=solution_seed)
         solution = enforce_hard_constraints(
             solution,
             instance,
@@ -47,6 +52,76 @@ def generate_initial_population(
         population.append(solution)
 
     return population
+
+
+def generate_edd_solution(instance, seed=42):
+    rng = random.Random(seed)
+    refs_by_id = create_refs_by_id(instance)
+    decorated_orders = []
+    skipped_orders = 0
+
+    for order_index, order in enumerate(instance["demand"]):
+        ref_id = str(order["ref_id"]).strip()
+
+        if ref_id not in refs_by_id:
+            print(
+                f"WARNING: demand ref_id {ref_id} not found in references. "
+                f"Skipping order."
+            )
+            skipped_orders += 1
+            continue
+
+        ref = refs_by_id[ref_id]
+        economic_value = get_order_economic_value(order, ref)
+        delivery_date = order.get("delivery_date")
+        sort_delivery = (
+            delivery_date
+            if delivery_date is not None
+            else instance.get("n_days", 0) + 1
+        )
+        decorated_orders.append((
+            sort_delivery,
+            -economic_value,
+            rng.random(),
+            order_index,
+            order,
+            ref,
+            ref_id,
+        ))
+
+    decorated_orders.sort()
+
+    solution = []
+
+    for _, _, _, order_index, order, ref, ref_id in decorated_orders:
+        valid_lines = valid_lines_for_ref(ref)
+        valid_days = get_valid_days_for_ref(instance, ref)
+
+        if not valid_lines or not valid_days:
+            line = None
+            day = None
+            postponed = True
+        else:
+            line = rng.choice(valid_lines)
+            day = rng.choice(valid_days)
+            postponed = False
+
+        solution.append({
+            "order_id": order_index,
+            "ref_id": ref_id,
+            "master_boxes": order["master_boxes"],
+            "delivery_date": order["delivery_date"],
+            "delivery_calendar_date": order.get("delivery_calendar_date"),
+            "adjusted_delivery_date": order.get("adjusted_delivery_date"),
+            "day": day,
+            "line": line,
+            "postponed": postponed,
+        })
+
+    if skipped_orders > 0:
+        print(f"WARNING: skipped {skipped_orders} demand orders.")
+
+    return solution
 
 
 
@@ -228,7 +303,7 @@ def crossover(parent_1, parent_2):
 def mutate(
     solution,
     instance,
-    mutation_rate=0.10,
+    mutation_rate=0.057,
 ):
     mutated_solution = deepcopy(solution)
 
@@ -552,15 +627,17 @@ def reinsert_postponed_orders(solution, instance, max_values, weights):
 
 def run_genetic_algorithm(
     instance,
-    population_size=100,
+    population_size=108,
     generations=200,
-    mutation_rate=0.10,
+    mutation_rate=0.057,
     elite_size=5,
     tournament_size=3,
-    stagnation_k=20,
+    stagnation_k=26,
     seed=0,
     verbose= True,
     objective_weights=None,
+    heuristic_ratio=0.0,
+    return_history=False,
 ):
     start_time = time.perf_counter()
     random.seed(seed)
@@ -577,6 +654,7 @@ def run_genetic_algorithm(
         population_size,
         seed=seed,
         objective_weights=objective_weights,
+        heuristic_ratio=heuristic_ratio,
     )
 
     if verbose:
@@ -604,6 +682,10 @@ def run_genetic_algorithm(
     best_metrics = initial_best_metrics
     generations_without_improvement = 0
     actual_generations = 0
+    convergence_history = [{
+        "generation": 0,
+        "best_fitness": best_metrics["normalised_fitness"],
+    }]
     
     for generation in range(1, generations + 1):
         actual_generations = generation
@@ -630,6 +712,11 @@ def run_genetic_algorithm(
             generations_without_improvement = 0  # reset
         else:
             generations_without_improvement += 1  # increment
+
+        convergence_history.append({
+            "generation": generation,
+            "best_fitness": best_metrics["normalised_fitness"],
+        })
 
         # Stagnation check
         if generations_without_improvement >= stagnation_k:
@@ -758,6 +845,9 @@ def run_genetic_algorithm(
     print(f"Maximum capacity time: {max_values['capacity_time']:.2f}")
     print(f"Maximum operator minutes: {max_values['operator_minutes']:.2f}")
 
+    if return_history:
+        return best_solution, best_metrics, actual_generations, convergence_history
+
     return best_solution, best_metrics,actual_generations
 
 
@@ -767,15 +857,24 @@ def run_genetic_algorithm(
 # ============================================================
 
 if __name__ == "__main__":
-    instance = load_real_instance("../Inputs_EmpresaX.xlsx")
+    instance = load_real_instance(
+        "../Inputs_EmpresaX_small.xlsx",
+        operational_config={
+            "shift_start_min": 480,
+            "shift_end_min": 990,
+            "lunch_break_min": 30,
+            "cleaning_time_min": 30,
+        },
+    )
 
     best_solution, best_metrics = run_genetic_algorithm(
         instance,
-        population_size=200,
+        population_size=108,
         generations=200,
-        mutation_rate=0.10,
+        mutation_rate=0.057,
         elite_size=5,
         tournament_size=3,
+        stagnation_k=26,
         seed=42,
     )
 
