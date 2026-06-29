@@ -33,7 +33,7 @@ def generate_initial_population(
     population_size=200,
     seed=0,
     objective_weights=None,
-    heuristic_ratio=0.0,
+    heuristic_ratio=0.15,
 ):
     population = []
     heuristic_count = int(round(population_size * max(0.0, min(1.0, heuristic_ratio))))
@@ -683,7 +683,7 @@ def run_genetic_algorithm(
     seed=0,
     verbose= True,
     objective_weights=None,
-    heuristic_ratio=0.0,
+    heuristic_ratio=0.15,
     return_history=False,
 ):
     start_time = time.perf_counter()

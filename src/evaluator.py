@@ -277,7 +277,6 @@ def generate_random_solution(instance, seed=42):
             "delivery_date": order["delivery_date"],
             "delivery_calendar_date": order.get("delivery_calendar_date"),
             "adjusted_delivery_date": order.get("adjusted_delivery_date"),
-            "priority": order["priority"],
             "day": day,
             "line": line,
             "postponed": postponed,
@@ -285,6 +284,8 @@ def generate_random_solution(instance, seed=42):
 
     if skipped_orders > 0:
         print(f"WARNING: skipped {skipped_orders} demand orders.")
+
+    random.shuffle(solution)
 
     return solution
 
@@ -963,8 +964,7 @@ def print_solution(solution):
             f"{item['ref_id']} | "
             f"{item['master_boxes']} boxes | "
             f"{status} | "
-            f"delivery {item['delivery_date']} | "
-            f"priority {item['priority']}"
+            f"delivery {item['delivery_date']}"
         )
 
 def print_metrics(metrics):
@@ -1242,7 +1242,7 @@ def print_validation_report(solution, instance, title="VALIDATION REPORT"):
 if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))
     instance_path = os.path.abspath(
-        os.path.join(script_dir, "..", "Inputs_EmpresaX.xlsx")
+        os.path.join(script_dir, "..", "Inputs_EmpresaX_small.xlsx")
     )
 
     instance = load_real_instance(instance_path)

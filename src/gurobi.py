@@ -918,7 +918,15 @@ def solve_simplified_with_gurobi(instance, time_limit=1800, verbose=True):
 
 
 if __name__ == "__main__":
-    instance = load_real_instance("../Inputs_EmpresaX_small.xlsx")
+    instance = load_real_instance(
+        "../Inputs_EmpresaX_small.xlsx",
+        operational_config={
+            "shift_start_min": 480,
+            "shift_end_min": 990,
+            "lunch_break_min": 30,
+            "cleaning_time_min": 30,
+        },
+    )
 
     solution, metrics, info = solve_with_gurobi(
         instance,

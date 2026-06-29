@@ -6,7 +6,7 @@ from calendar import monthrange
 from datetime import datetime, date, timedelta
 
 
-LINE_GROSS_CAPACITY_MIN = 480
+LINE_GROSS_CAPACITY_MIN = 510
 END_OF_DAY_CLEANING_TIME_MIN = 30
 CLEANING_OPERATORS = 5
 
@@ -16,7 +16,7 @@ LINE_AVAILABLE_CAPACITY_MIN = (
 
 DEFAULT_PRODUCTIVE_OPERATORS = 20
 DEFAULT_SHIFT_START_MIN = 8 * 60
-DEFAULT_SHIFT_END_MIN = 16 * 60
+DEFAULT_SHIFT_END_MIN = 16 * 60 + 30
 DEFAULT_LUNCH_BREAK_MIN = 30
 
 
@@ -1469,6 +1469,6 @@ def print_instance_summary(instance):
 
 
 if __name__ == "__main__":
-    instance = load_real_instance(excel_path="../Inputs_EmpresaXReal.xlsx")
+    instance = load_real_instance(excel_path="../Inputs_EmpresaX_small.xlsx")
     print_instance_summary(instance)
 

@@ -43,6 +43,7 @@ ELITE_SIZE = 5
 TOURNAMENT_SIZE = 3
 STAGNATION_K = 26
 RANDOM_SEED = 42
+EDD_HEURISTIC_RATIO = 0.15
 DEFAULT_OPERATORS = 20
 LUNCH_BREAK_MIN = 30
 SHIFT_GROSS_CAPACITY_MIN = 8 * 60
@@ -470,6 +471,7 @@ def build_simple_daily_plan_df(instance, plan_df):
         return pd.DataFrame()
 
     rows = []
+    line_totals_by_day = {}
     scheduled_df = scheduled_df.sort_values(["Day", "Line", "Seq."])
 
     for (day, line), group_df in scheduled_df.groupby(["Day", "Line"], sort=True):
@@ -510,19 +512,71 @@ def build_simple_daily_plan_df(instance, plan_df):
             if excess_over_tolerance > 0
             else "ok"
         )
+        line_totals_by_day.setdefault(int(day), []).append({
+            "line": line,
+            "production_total": production_total,
+            "setup_total": setup_total,
+            "cleaning_time": cleaning_time,
+            "occupied_without_cleaning": occupied_without_cleaning,
+            "occupied_with_cleaning": occupied_with_cleaning,
+            "status": total_status,
+        })
 
         rows.append({
             "Dia": int(day),
-            "Produto": f"TOTAL DIA {int(day)} - {line}",
+            "Produto": f"TOTAL LINHA {line}",
             "Quantidade": "",
             "Linha": line,
             "Tempo de produção (h)": round(production_total / 60, 2),
             "Tempo de setup (h)": round(setup_total / 60, 2),
             "Limpeza final (h)": round(cleaning_time / 60, 2),
             "Tempo total (h)": round(occupied_with_cleaning / 60, 2),
-            "_tipo": "total",
+            "_tipo": "total_linha",
             "_estado": total_status,
         })
+
+    for day, line_totals in sorted(line_totals_by_day.items()):
+        max_line_total = max(
+            item["occupied_with_cleaning"]
+            for item in line_totals
+        )
+        max_production_total = max(
+            item["production_total"]
+            for item in line_totals
+        )
+        max_setup_total = max(
+            item["setup_total"]
+            for item in line_totals
+        )
+        max_cleaning_time = max(
+            item["cleaning_time"]
+            for item in line_totals
+        )
+        rows.append({
+            "Dia": int(day),
+            "Produto": f"TOTAL DIA {int(day)}",
+            "Quantidade": "",
+            "Linha": "L1/L2",
+            "Tempo de produção (h)": round(max_production_total / 60, 2),
+            "Tempo de setup (h)": round(max_setup_total / 60, 2),
+            "Limpeza final (h)": round(max_cleaning_time / 60, 2),
+            "Tempo total (h)": round(max_line_total / 60, 2),
+            "_tipo": "total_dia",
+            "_estado": (
+                "warning"
+                if any(item["status"] == "warning" for item in line_totals)
+                else "ok"
+            ),
+        })
+
+    rows = sorted(
+        rows,
+        key=lambda row: (
+            row["Dia"],
+            row["Linha"] if row["_tipo"] != "total_dia" else "ZZZ",
+            0 if row["_tipo"] == "produto" else 1,
+        ),
+    )
 
     return pd.DataFrame(rows)
 
@@ -564,7 +618,7 @@ def render_simple_daily_plan_table(simple_plan_df, key, height=520):
     def style_rows(row):
         source_row = simple_plan_df.loc[row.name]
 
-        if source_row["_tipo"] != "total":
+        if source_row["_tipo"] not in ("total_linha", "total_dia"):
             return [""] * len(row)
 
         if source_row["_estado"] == "warning":
@@ -603,7 +657,8 @@ def build_calendar_day_summary(instance, simple_plan_df):
     for day in range(1, instance.get("n_days", 0) + 1):
         day_df = simple_plan_df[simple_plan_df["Dia"] == day]
         product_df = day_df[day_df["_tipo"] == "produto"]
-        total_df = day_df[day_df["_tipo"] == "total"]
+        total_day_df = day_df[day_df["_tipo"] == "total_dia"]
+        total_line_df = day_df[day_df["_tipo"] == "total_linha"]
         line_labels = []
 
         for line in instance.get("final_lines", []):
@@ -612,13 +667,13 @@ def build_calendar_day_summary(instance, simple_plan_df):
                 line_labels.append(f"{line}: {line_count}")
 
         total_hours = (
-            total_df["Tempo total (h)"].sum()
-            if not total_df.empty
+            total_day_df["Tempo total (h)"].max()
+            if not total_day_df.empty
             else 0
         )
         has_warning = (
-            not total_df.empty
-            and (total_df["_estado"] == "warning").any()
+            not total_line_df.empty
+            and (total_line_df["_estado"] == "warning").any()
         )
 
         summaries[day] = {
@@ -1122,6 +1177,7 @@ def render_capacity_what_if_section(instance, baseline_solution, baseline_metric
                 tournament_size=TOURNAMENT_SIZE,
                 stagnation_k=STAGNATION_K,
                 seed=RANDOM_SEED,
+                heuristic_ratio=EDD_HEURISTIC_RATIO,
             )
 
         scenario_max_values = compute_max_values(scenario_instance)
@@ -1171,6 +1227,7 @@ def run_dashboard_ga_scenario(instance, seed=RANDOM_SEED, objective_weights=None
         stagnation_k=STAGNATION_K,
         seed=seed,
         objective_weights=objective_weights,
+        heuristic_ratio=EDD_HEURISTIC_RATIO,
     )
     max_values = compute_max_values(instance)
     metrics = add_normalised_fitness_metrics(
@@ -3782,6 +3839,7 @@ def render_configuration_plan():
                     tournament_size=TOURNAMENT_SIZE,
                     stagnation_k=STAGNATION_K,
                     seed=RANDOM_SEED,
+                    heuristic_ratio=EDD_HEURISTIC_RATIO,
                 )
     
             st.session_state["ga_solution"] = deepcopy(best_solution)
