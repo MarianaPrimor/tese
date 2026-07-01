@@ -15,6 +15,7 @@ LINE_AVAILABLE_CAPACITY_MIN = (
 )
 
 DEFAULT_PRODUCTIVE_OPERATORS = 20
+MAX_LOT_CAPACITY_SHARE = 0.75
 DEFAULT_SHIFT_START_MIN = 8 * 60
 DEFAULT_SHIFT_END_MIN = 16 * 60 + 30
 DEFAULT_LUNCH_BREAK_MIN = 30
@@ -1050,8 +1051,12 @@ def _split_large_orders(demand, refs, final_lines, available_line_time_min):
 
         fastest_rate = max(possible_rates)
 
+        max_lot_time_min = max(
+            1,
+            available_line_time_min * MAX_LOT_CAPACITY_SHARE,
+        )
         max_cakes_per_lot = (
-            available_line_time_min / 60
+            max_lot_time_min / 60
         ) * fastest_rate
 
         max_boxes_per_lot = int(

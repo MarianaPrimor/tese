@@ -101,9 +101,18 @@ def generate_edd_solution(instance, seed=42):
         if ref_id not in refs_by_id:
             print(
                 f"WARNING: demand ref_id {ref_id} not found in references. "
-                f"Skipping order."
+                f"Keeping order postponed."
             )
             skipped_orders += 1
+            decorated_orders.append((
+                order.get("delivery_date") or instance.get("n_days", 0) + 1,
+                0,
+                rng.random(),
+                order_index,
+                order,
+                None,
+                ref_id,
+            ))
             continue
 
         ref = refs_by_id[ref_id]
@@ -129,8 +138,8 @@ def generate_edd_solution(instance, seed=42):
     solution = []
 
     for _, _, _, order_index, order, ref, ref_id in decorated_orders:
-        valid_lines = valid_lines_for_ref(ref)
-        valid_days = get_valid_days_for_ref(instance, ref)
+        valid_lines = valid_lines_for_ref(ref) if ref is not None else []
+        valid_days = get_valid_days_for_ref(instance, ref) if ref is not None else []
 
         if not valid_lines or not valid_days:
             line = None
@@ -154,7 +163,7 @@ def generate_edd_solution(instance, seed=42):
         })
 
     if skipped_orders > 0:
-        print(f"WARNING: skipped {skipped_orders} demand orders.")
+        print(f"WARNING: kept {skipped_orders} unknown-reference demand orders postponed.")
 
     return apply_locked_orders(solution, instance)
 
@@ -615,7 +624,7 @@ def reinsert_postponed_orders(solution, instance, max_values, weights):
     while inserted:
         inserted = False
         best_candidate = None
-        best_score = current_score
+        best_score = None
 
         postponed_genes = sorted(
             (
@@ -657,7 +666,7 @@ def reinsert_postponed_orders(solution, instance, max_values, weights):
                         weights=weights,
                     )
 
-                    if candidate_score < best_score:
+                    if best_candidate is None or candidate_score < best_score:
                         best_score = candidate_score
                         best_candidate = candidate
 
