@@ -1,0 +1,39 @@
+name: Run EDD baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      input_file:
+        description: "Planning input Excel file"
+        required: true
+        default: "Inputs_June.xlsx"
+
+jobs:
+  edd-baseline:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run EDD baseline
+        run: |
+          python src/edd_baseline.py \
+            --input "${{ github.event.inputs.input_file }}" \
+            --output-dir "outputs/edd_baseline"
+
+      - name: Upload EDD baseline results
+        uses: actions/upload-artifact@v4
+        with:
+          name: edd-baseline-results
+          path: outputs/edd_baseline/
