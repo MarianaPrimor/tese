@@ -20,6 +20,18 @@ DEFAULT_OPERATIONAL_CONFIG = {
 }
 
 
+def apply_operator_override(instance, operators):
+    if operators is None:
+        return instance
+
+    instance["standard_operators"] = operators
+    instance["standard_operators_by_day"] = {
+        day: operators
+        for day in range(1, instance.get("n_days", 0) + 1)
+    }
+    return instance
+
+
 def get_total_order_value_and_kg(instance):
     refs_by_id = {
         str(ref["ref_id"]).strip(): ref
@@ -239,6 +251,7 @@ def run_single(args):
         str(args.input),
         operational_config=DEFAULT_OPERATIONAL_CONFIG,
     )
+    instance = apply_operator_override(instance, args.operators)
 
     result = run_genetic_algorithm(
         instance,
@@ -326,6 +339,7 @@ def collect_results(args):
         str(args.input),
         operational_config=DEFAULT_OPERATIONAL_CONFIG,
     )
+    instance = apply_operator_override(instance, args.operators)
     total_kg, total_value = get_total_order_value_and_kg(instance)
     sanity = pd.DataFrame(
         [sanity_row(row, total_kg, total_value)
@@ -383,6 +397,12 @@ def parse_args():
     parser.add_argument("--elite-size", type=int, default=5)
     parser.add_argument("--tournament-size", type=int, default=3)
     parser.add_argument("--heuristic-ratio", type=float, default=0.15)
+    parser.add_argument(
+        "--operators",
+        type=int,
+        default=None,
+        help="Override the number of available operators per day.",
+    )
     return parser.parse_args()
 
 
