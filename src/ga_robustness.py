@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from evaluator import get_order_economic_value, get_order_kg
+from evaluator import get_available_line_time_for_day
 from generate_instance import load_real_instance
 from geneticalgorithm import run_genetic_algorithm
 
@@ -38,7 +39,7 @@ def get_total_order_value_and_kg(instance):
     return total_kg, total_value
 
 
-def metric_row(seed, metrics, generations):
+def metric_row(seed, metrics, generations, instance):
     max_operator_minutes = (
         metrics.get("max_values", {}).get("operator_minutes", 0) or 0
     )
@@ -47,6 +48,8 @@ def metric_row(seed, metrics, generations):
         if max_operator_minutes
         else 0
     )
+    capacity_l1_pct = line_capacity_utilisation_pct(metrics, instance, "L1")
+    capacity_l2_pct = line_capacity_utilisation_pct(metrics, instance, "L2")
 
     return {
         "seed": seed,
@@ -60,8 +63,16 @@ def metric_row(seed, metrics, generations):
         "capacity_utilisation_pct": (
             metrics.get("capacity_utilisation_ratio", 0) * 100
         ),
+        "capacity_utilisation_L1_pct": capacity_l1_pct,
+        "capacity_utilisation_L2_pct": capacity_l2_pct,
         "operator_utilisation_pct": operator_utilisation_pct,
         "operator_usage_minutes": metrics.get("operator_usage_minutes", 0),
+        "peak_operators": metrics.get("peak_operators", 0),
+        "standard_operators": metrics.get("standard_operators", 0),
+        "max_daily_required_operators": max(
+            metrics.get("operators_required_by_day", {0: 0}).values()
+            or [0]
+        ),
         "postponed_orders": metrics.get("postponed_orders", 0),
         "postponed_boxes": metrics.get("postponed_boxes", 0),
         "delay_days_total": metrics.get("delay_days_total", 0),
@@ -71,6 +82,37 @@ def metric_row(seed, metrics, generations):
         "total_operator_excess": metrics.get("total_operator_excess", 0),
         "infeasible_solution": metrics.get("infeasible_solution", False),
     }
+
+
+def line_capacity_utilisation_pct(metrics, instance, line):
+    production_by_day_line = metrics.get("production_time_by_day_line", {})
+    setup_by_day_line = metrics.get("setup_time_by_day_line", {})
+    days = {
+        day
+        for day, current_line in production_by_day_line.keys()
+        if current_line == line
+    }
+    days.update({
+        day
+        for day, current_line in setup_by_day_line.keys()
+        if current_line == line
+    })
+
+    if not days:
+        return 0.0
+
+    values = []
+    for day in sorted(days):
+        available = get_available_line_time_for_day(instance, day)
+        if not available:
+            continue
+        total_time = (
+            production_by_day_line.get((day, line), 0)
+            + setup_by_day_line.get((day, line), 0)
+        )
+        values.append(total_time / available * 100)
+
+    return sum(values) / len(values) if values else 0.0
 
 
 def sanity_row(row, total_kg, total_value):
@@ -101,8 +143,13 @@ def summary_rows(raw_df):
         "postponed_economic_value",
         "setup_total_min",
         "capacity_utilisation_pct",
+        "capacity_utilisation_L1_pct",
+        "capacity_utilisation_L2_pct",
         "operator_utilisation_pct",
         "operator_usage_minutes",
+        "peak_operators",
+        "standard_operators",
+        "max_daily_required_operators",
         "postponed_orders",
         "postponed_boxes",
         "delay_days_total",
@@ -207,7 +254,7 @@ def run_single(args):
         return_history=True,
     )
     _, metrics, generations, history = result
-    row = metric_row(args.seed, metrics, generations)
+    row = metric_row(args.seed, metrics, generations, instance)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_csv(args.output_dir / f"ga_robustness_seed_{args.seed}.csv", [row])
