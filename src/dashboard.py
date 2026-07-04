@@ -1,7 +1,8 @@
-﻿import os
+import os
 import html
 import unicodedata
 from copy import deepcopy
+from io import BytesIO
 from datetime import date, time, timedelta
 
 import altair as alt
@@ -838,6 +839,135 @@ def build_postponed_orders_df(plan_df):
     ]]
 
 
+
+def build_daily_sequence_export_df(instance, plan_df):
+    columns = [
+        "Data de produção",
+        "Dia",
+        "Linha",
+        "Sequência",
+        "Produto",
+        "Nome",
+        "Quantidade",
+        "Setup (min)",
+        "Tempo de produção (min)",
+        "Kg",
+        "Valor económico",
+        "Data de entrega",
+    ]
+    scheduled_df = plan_df[
+        (plan_df["Status"] == "Scheduled")
+        & (plan_df["Line"].isin(instance.get("final_lines", ["L1", "L2"])))
+    ].copy()
+
+    if scheduled_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    scheduled_df = (
+        scheduled_df
+        .sort_values(["Day", "Line", "Seq."])
+        .rename(columns={
+            "Production date": "Data de produção",
+            "Day": "Dia",
+            "Line": "Linha",
+            "Seq.": "Sequência",
+            "Reference": "Produto",
+            "Reference name": "Nome",
+            "Master boxes": "Quantidade",
+            "Setup time (min)": "Setup (min)",
+            "Production time (min)": "Tempo de produção (min)",
+            "Economic value": "Valor económico",
+            "Delivery date": "Data de entrega",
+        })
+    )
+
+    return scheduled_df[columns]
+
+
+def build_capacity_export_df(instance, metrics):
+    columns = [
+        "Data de produção",
+        "Dia",
+        "Linha",
+        "Turnos",
+        "Tempo de produção (min)",
+        "Tempo de setup (min)",
+        "Tempo ocupado (min)",
+        "Tempo disponível (min)",
+        "Excesso de capacidade (min)",
+        "Utilização (%)",
+    ]
+    capacity_df = build_capacity_df(instance, metrics)
+
+    if capacity_df.empty:
+        return pd.DataFrame(columns=columns)
+
+    capacity_df = capacity_df.rename(columns={
+        "Production date": "Data de produção",
+        "Day": "Dia",
+        "Line": "Linha",
+        "Shifts": "Turnos",
+        "Production time (min)": "Tempo de produção (min)",
+        "Setup time (min)": "Tempo de setup (min)",
+        "Occupied time (min)": "Tempo ocupado (min)",
+        "Available time (min)": "Tempo disponível (min)",
+        "Capacity excess (min)": "Excesso de capacidade (min)",
+        "Utilization (%)": "Utilização (%)",
+    })
+
+    return capacity_df[columns]
+
+
+def build_scenario_metrics_export_df(
+    metrics,
+    capacity_utilization_by_line,
+    box_fulfilment_rate,
+    total_boxes,
+    operator_occupancy_pct,
+):
+    postponed_boxes = metrics.get("postponed_boxes", 0)
+    scheduled_boxes = max(0, total_boxes - postponed_boxes)
+    metric_rows = [
+        ("Fitness normalizada", metrics.get("normalised_fitness", 0)),
+        ("Cumprimento por caixas (%)", box_fulfilment_rate),
+        ("Caixas planeadas", scheduled_boxes),
+        ("Caixas adiadas", postponed_boxes),
+        ("Kg planeados", metrics.get("scheduled_kg", 0)),
+        ("Kg adiados", metrics.get("postponed_kg", 0)),
+        ("Valor económico planeado", metrics.get("scheduled_economic_value", 0)),
+        ("Valor económico adiado", metrics.get("postponed_economic_value", 0)),
+        ("Tempo total de setup (min)", metrics.get("setup_total_min", 0)),
+        ("Utilização L1 (%)", capacity_utilization_by_line.get("L1", 0)),
+        ("Utilização L2 (%)", capacity_utilization_by_line.get("L2", 0)),
+        ("Utilização de operadores (%)", operator_occupancy_pct),
+        ("Operator-minutes", metrics.get("operator_usage_minutes", 0)),
+        ("Ordens adiadas", metrics.get("postponed_orders", 0)),
+        ("Dias de atraso", metrics.get("delay_days_total", 0)),
+    ]
+
+    return pd.DataFrame(metric_rows, columns=["Métrica", "Valor"])
+
+
+def build_scenario_excel_export(
+    plan_df,
+    postponed_df,
+    capacity_df,
+    metrics_df,
+    movement_df=None,
+):
+    output = BytesIO()
+
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        plan_df.to_excel(writer, index=False, sheet_name="Plano diario")
+        postponed_df.to_excel(writer, index=False, sheet_name="Pedidos adiados")
+        capacity_df.to_excel(writer, index=False, sheet_name="Capacidade linha")
+        metrics_df.to_excel(writer, index=False, sheet_name="Metricas")
+
+        if movement_df is not None and not movement_df.empty:
+            movement_df.to_excel(writer, index=False, sheet_name="Mudancas estado")
+
+    output.seek(0)
+    return output.getvalue()
 def render_simple_daily_plan_table(simple_plan_df, key, height=520):
     if simple_plan_df.empty:
         st.info("Não existem ordens planeadas.")
@@ -935,6 +1065,29 @@ def build_calendar_day_summary(instance, simple_plan_df, metrics=None):
     return summaries
 
 
+
+def compute_operator_occupancy_pct(instance, metrics):
+    total_peak_operators = 0
+    total_available_operators = 0
+    intervals = metrics.get("operator_usage_intervals", [])
+
+    for day in range(1, instance.get("n_days", 0) + 1):
+        available_operators = get_standard_operators_for_day(instance, day)
+        peak_operators = max(
+            (
+                interval.get("operators", 0)
+                for interval in intervals
+                if interval.get("day") == day
+            ),
+            default=0,
+        )
+        total_peak_operators += peak_operators
+        total_available_operators += available_operators
+
+    if total_available_operators <= 0:
+        return 0
+
+    return total_peak_operators / total_available_operators * 100
 def render_daily_plan_calendar(instance, simple_plan_df, metrics=None):
     if simple_plan_df.empty:
         st.info("Não existem ordens planeadas para apresentar no calendário.")
@@ -2631,10 +2784,11 @@ def render_demand_experiment(instance, baseline_solution, baseline_metrics):
             "Movimento": movement,
         })
 
+    movement_df = pd.DataFrame(movement_rows)
+
     if movement_rows:
         st.markdown("**Pedidos que mudaram de estado**")
-        st.dataframe(pd.DataFrame(movement_rows), width="stretch", hide_index=True)
-
+        st.dataframe(movement_df, width="stretch", hide_index=True)
 
 def build_scenario_frozen_orders(
     baseline_solution,
@@ -2993,6 +3147,10 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         scenario_instance,
         scenario_metrics,
     )
+    operator_occupancy_pct = compute_operator_occupancy_pct(
+        scenario_instance,
+        scenario_metrics,
+    )
 
     kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5 = st.columns(5)
     kpi_col1.metric("Cumprimento por caixas", f"{box_fulfilment_rate:.1f}%")
@@ -3009,8 +3167,8 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         f"{capacity_utilization_by_line.get('L2', 0):.1f}%",
     )
     kpi_col5.metric(
-        "Ordens bloqueadas",
-        len(st.session_state.get("combined_scenario_locked_orders", {})),
+        "Utilização operadores",
+        f"{operator_occupancy_pct:.1f}%",
     )
 
     comparison_df = build_what_if_comparison_df(
@@ -3028,6 +3186,36 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         scenario_metrics,
         "Cenário combinado: Baseline vs. Cenário",
     )
+
+    scenario_plan_df = build_plan_df(scenario_instance, scenario_solution)
+    scenario_daily_schedule_df = build_daily_sequence_export_df(
+        scenario_instance,
+        scenario_plan_df,
+    )
+    scenario_postponed_df = build_postponed_orders_df(scenario_plan_df)
+    scenario_capacity_df = build_capacity_export_df(
+        scenario_instance,
+        scenario_metrics,
+    )
+    scenario_metrics_df = build_scenario_metrics_export_df(
+        scenario_metrics,
+        capacity_utilization_by_line,
+        box_fulfilment_rate,
+        total_boxes,
+        operator_occupancy_pct,
+    )
+
+    st.markdown("**Plano resultante do cenário**")
+
+    if scenario_daily_schedule_df.empty:
+        st.info("O cenário não tem ordens planeadas.")
+    else:
+        st.dataframe(
+            light_table_style(scenario_daily_schedule_df),
+            width="stretch",
+            hide_index=True,
+            height=360,
+        )
 
     baseline_status = build_signature_status(baseline_solution)
     scenario_status = build_signature_status(scenario_solution)
@@ -3050,9 +3238,66 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
             "Movimento": movement,
         })
 
+    movement_df = pd.DataFrame(movement_rows)
+
     if movement_rows:
         st.markdown("**Pedidos que mudaram de estado**")
-        st.dataframe(pd.DataFrame(movement_rows), width="stretch", hide_index=True)
+        st.dataframe(movement_df, width="stretch", hide_index=True)
+
+    with st.expander("Pedidos adiados e capacidade do cenário", expanded=False):
+        st.markdown("**Pedidos adiados no cenário**")
+
+        if scenario_postponed_df.empty:
+            st.success("O cenário não tem pedidos adiados.")
+        else:
+            st.dataframe(
+                light_table_style(scenario_postponed_df),
+                width="stretch",
+                hide_index=True,
+                height=260,
+            )
+
+        st.markdown("**Capacidade por dia e linha**")
+
+        if scenario_capacity_df.empty:
+            st.info("Não existem dados de capacidade para este cenário.")
+        else:
+            st.dataframe(
+                light_table_style(scenario_capacity_df),
+                width="stretch",
+                hide_index=True,
+                height=260,
+            )
+
+    scenario_excel = build_scenario_excel_export(
+        scenario_daily_schedule_df,
+        scenario_postponed_df,
+        scenario_capacity_df,
+        scenario_metrics_df,
+        movement_df,
+    )
+    download_col1, download_col2, download_col3 = st.columns(3)
+    download_col1.download_button(
+        "Descarregar cenário em Excel",
+        data=scenario_excel,
+        file_name="cenario_plano_producao.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        width="stretch",
+    )
+    download_col2.download_button(
+        "Descarregar plano CSV",
+        data=scenario_daily_schedule_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="cenario_plano_producao.csv",
+        mime="text/csv",
+        width="stretch",
+    )
+    download_col3.download_button(
+        "Descarregar adiados CSV",
+        data=scenario_postponed_df.to_csv(index=False).encode("utf-8-sig"),
+        file_name="cenario_pedidos_adiados.csv",
+        mime="text/csv",
+        width="stretch",
+    )
 
 
 def render_experimental_scenario_analysis(instance, baseline_solution, baseline_metrics):
