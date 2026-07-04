@@ -1573,6 +1573,7 @@ def run_dashboard_ga_scenario(instance, seed=RANDOM_SEED, objective_weights=None
     metrics = add_normalised_fitness_metrics(
         evaluate_solution(solution, instance),
         max_values,
+        weights=objective_weights,
     )
     return solution, metrics, history
 
@@ -2262,6 +2263,71 @@ def render_weight_experiment(instance, baseline_metrics):
         )
 
 
+def render_scenario_weight_controls():
+    weight_labels = {
+        "postponement": "Adiamento",
+        "delay": "Atraso",
+        "setup": "Setup",
+        "economic_value": "Valor económico",
+        "capacity_utilisation": "Utilização de capacidade",
+        "operator_utilisation": "Utilização de operadores",
+    }
+
+    with st.expander("Parâmetros avançados da função objetivo", expanded=False):
+        use_custom_weights = st.checkbox(
+            "Usar pesos personalizados neste cenário",
+            value=False,
+            help=(
+                "Se não selecionar esta opção, o cenário usa os pesos padrão "
+                "calibrados na dissertação."
+            ),
+            key="combined_scenario_use_custom_weights",
+        )
+
+        if not use_custom_weights:
+            st.caption(
+                "Pesos padrão em uso: "
+                + ", ".join(
+                    f"{weight_labels[key]}={value:.3f}"
+                    for key, value in DEFAULT_NORMALISED_WEIGHTS.items()
+                )
+            )
+            return None
+
+        slider_cols = st.columns(3)
+        raw_weights = {}
+
+        for index, (key, label) in enumerate(weight_labels.items()):
+            raw_weights[key] = slider_cols[index % 3].slider(
+                label,
+                min_value=0.0,
+                max_value=1.0,
+                value=float(DEFAULT_NORMALISED_WEIGHTS.get(key, 0)),
+                step=0.01,
+                key=f"combined_scenario_weight_{key}",
+            )
+
+        weights = normalize_dashboard_weights(raw_weights)
+        st.caption(
+            "Os valores são normalizados automaticamente para a soma ser 1. "
+            f"Soma usada no GA: {sum(weights.values()):.2f}."
+        )
+        st.dataframe(
+            pd.DataFrame([
+                {
+                    "Critério": weight_labels[key],
+                    "Valor escolhido": round(raw_weights[key], 3),
+                    "Peso usado": round(weights[key], 3),
+                }
+                for key in weight_labels
+            ]),
+            width="stretch",
+            hide_index=True,
+        )
+
+        return weights
+
+
 def build_demand_experiment_df(instance):
     refs_by_id = create_refs_by_id(instance)
     rows = []
@@ -2811,6 +2877,8 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         key="combined_scenario_capacity_editor",
     )
 
+    scenario_objective_weights = render_scenario_weight_controls()
+
     if st.button("Simular cenário", type="primary", width="content"):
         selected_demand = []
         original_to_scenario_order_id = {}
@@ -2896,12 +2964,16 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
             scenario_solution, scenario_metrics, _ = run_dashboard_ga_scenario(
                 scenario_instance,
                 seed=RANDOM_SEED,
+                objective_weights=scenario_objective_weights,
             )
 
         st.session_state["combined_scenario_instance"] = scenario_instance
         st.session_state["combined_scenario_solution"] = scenario_solution
         st.session_state["combined_scenario_metrics"] = scenario_metrics
         st.session_state["combined_scenario_locked_orders"] = locked_orders
+        st.session_state["combined_scenario_objective_weights"] = (
+            scenario_objective_weights or dict(DEFAULT_NORMALISED_WEIGHTS)
+        )
 
     scenario_metrics = st.session_state.get("combined_scenario_metrics")
     scenario_solution = st.session_state.get("combined_scenario_solution")
@@ -2917,19 +2989,26 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
     )
     postponed_boxes = scenario_metrics.get("postponed_boxes", 0)
     box_fulfilment_rate = (1 - postponed_boxes / total_boxes) * 100
-    capacity_utilization = compute_overall_capacity_utilization(
+    capacity_utilization_by_line = compute_capacity_utilization_by_line(
         scenario_instance,
         scenario_metrics,
     )
 
-    kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
+    kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5 = st.columns(5)
     kpi_col1.metric("Cumprimento por caixas", f"{box_fulfilment_rate:.1f}%")
     kpi_col2.metric(
         "Valor produzido",
         f"€{scenario_metrics.get('scheduled_economic_value', 0):,.0f}",
     )
-    kpi_col3.metric("Utilização de capacidade", f"{capacity_utilization:.1f}%")
+    kpi_col3.metric(
+        "Utilização L1",
+        f"{capacity_utilization_by_line.get('L1', 0):.1f}%",
+    )
     kpi_col4.metric(
+        "Utilização L2",
+        f"{capacity_utilization_by_line.get('L2', 0):.1f}%",
+    )
+    kpi_col5.metric(
         "Ordens bloqueadas",
         len(st.session_state.get("combined_scenario_locked_orders", {})),
     )
@@ -3143,9 +3222,13 @@ def build_compact_schedule_df(instance, plan_df, best_metrics):
     return pd.DataFrame(rows)
 
 
-def add_normalised_fitness_metrics(metrics, max_values):
-    breakdown = normalised_fitness_breakdown(metrics, max_values)
-    score = normalised_fitness(metrics, max_values)
+def add_normalised_fitness_metrics(metrics, max_values, weights=None):
+    breakdown = normalised_fitness_breakdown(
+        metrics,
+        max_values,
+        weights=weights,
+    )
+    score = normalised_fitness(metrics, max_values, weights=weights)
 
     metrics["normalised_fitness"] = score
     metrics["normalised_fitness_breakdown"] = breakdown
