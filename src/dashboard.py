@@ -3181,11 +3181,6 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         width="stretch",
         hide_index=True,
     )
-    render_baseline_scenario_bar_chart(
-        baseline_metrics,
-        scenario_metrics,
-        "Cenário combinado: Baseline vs. Cenário",
-    )
 
     scenario_plan_df = build_plan_df(scenario_instance, scenario_solution)
     scenario_daily_schedule_df = build_daily_sequence_export_df(
