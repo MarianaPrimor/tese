@@ -175,6 +175,7 @@ def summary_rows(raw_df):
             "metric": metric,
             "mean": series.mean(),
             "std": series.std(ddof=1) if len(series) > 1 else 0.0,
+            "variance": series.var(ddof=1) if len(series) > 1 else 0.0,
             "min": series.min(),
             "max": series.max(),
         })
@@ -388,7 +389,7 @@ def parse_args():
     parser.add_argument("--input", default=str(repo_dir / "Inputs_June.xlsx"))
     parser.add_argument("--output-dir", type=Path,
                         default=repo_dir / "outputs" / "ga_robustness")
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--seed", type=int, default=45)
     parser.add_argument("--collect-only", action="store_true")
     parser.add_argument("--population-size", type=int, default=108)
     parser.add_argument("--mutation-rate", type=float, default=0.057)

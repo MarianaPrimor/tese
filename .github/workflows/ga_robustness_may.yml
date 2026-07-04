@@ -1,0 +1,88 @@
+name: GA Robustness - May
+
+on:
+  workflow_dispatch:
+
+jobs:
+  run-seed:
+    name: "May GA seed ${{ matrix.seed }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        seed: [45, 46, 47, 48, 49, 50, 51, 52, 53, 54]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run May GA robustness seed
+        run: >
+          python src/ga_robustness.py
+          --input Inputs_May.xlsx
+          --output-dir may_robustness_seed_outputs
+          --seed ${{ matrix.seed }}
+          --population-size 108
+          --mutation-rate 0.057
+          --stagnation-k 26
+          --generations 200
+          --elite-size 5
+          --tournament-size 3
+          --heuristic-ratio 0.15
+          --operators 20
+
+      - name: Upload seed result
+        uses: actions/upload-artifact@v4
+        with:
+          name: may-ga-seed-${{ matrix.seed }}
+          path: may_robustness_seed_outputs/*.csv
+
+  collect-results:
+    name: "Collect May GA robustness results"
+    needs: run-seed
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download all seed artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: may_robustness_artifacts
+
+      - name: Reorganize CSVs
+        run: |
+          mkdir -p may_robustness_final
+          find may_robustness_artifacts -name "*.csv" -exec cp {} may_robustness_final/ \;
+
+      - name: Generate May summary, Excel and figures
+        run: >
+          python src/ga_robustness.py
+          --collect-only
+          --input Inputs_May.xlsx
+          --output-dir may_robustness_final
+          --operators 20
+
+      - name: Upload May robustness package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ga-robustness-may-10-runs-results
+          path: may_robustness_final/
