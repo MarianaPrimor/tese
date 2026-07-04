@@ -1,9 +1,11 @@
 ﻿import os
 import html
+import unicodedata
 from copy import deepcopy
 from datetime import date, time, timedelta
 
 import altair as alt
+import openpyxl
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -48,6 +50,189 @@ EDD_HEURISTIC_RATIO = 0.15
 DEFAULT_OPERATORS = 20
 LUNCH_BREAK_MIN = 30
 SHIFT_GROSS_CAPACITY_MIN = 8 * 60
+
+
+def normalize_excel_label(value):
+    if value is None:
+        return ""
+
+    text = str(value).strip().lower()
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(char for char in text if not unicodedata.combining(char))
+
+    for old, new in {
+        "_": " ",
+        "-": " ",
+        "/": " ",
+        ".": " ",
+        "\n": " ",
+    }.items():
+        text = text.replace(old, new)
+
+    return " ".join(text.split())
+
+
+def validate_input_workbook(uploaded_excel):
+    required_sheets = ["2_REFERENCIAS", "3_SETUPS", "5_PROCURA"]
+    errors = []
+
+    try:
+        uploaded_excel.seek(0)
+        workbook = openpyxl.load_workbook(
+            uploaded_excel,
+            read_only=True,
+            data_only=True,
+        )
+    except Exception as exc:
+        return [f"O ficheiro não é um Excel válido: {exc}"]
+    finally:
+        try:
+            uploaded_excel.seek(0)
+        except Exception:
+            pass
+
+    sheet_lookup = {
+        sheet_name.strip().upper(): sheet_name
+        for sheet_name in workbook.sheetnames
+    }
+    missing_sheets = [
+        sheet_name
+        for sheet_name in required_sheets
+        if sheet_name not in sheet_lookup
+    ]
+
+    if missing_sheets:
+        errors.append(
+            "Faltam as folhas obrigatórias: " + ", ".join(missing_sheets) + "."
+        )
+        return errors
+
+    demand_sheet = workbook[sheet_lookup["5_PROCURA"]]
+    aliases = {
+        "ref_id": {
+            "ref id",
+            "referencia",
+            "referência",
+            "reference",
+            "produto",
+            "codigo referencia",
+            "código referência",
+            "codigo da referencia",
+            "código da referência",
+        },
+        "master_boxes": {
+            "master boxes",
+            "caixas master",
+            "caixas",
+            "quantidade",
+            "forecast unid",
+            "forecast unidades",
+        },
+        "delivery_date": {
+            "data entrega",
+            "data de entrega",
+            "entrega",
+            "delivery date",
+            "due date",
+        },
+    }
+    header_row_number = None
+    header_indexes = {}
+    header_values = []
+
+    for row_number, row in enumerate(
+        demand_sheet.iter_rows(
+            min_row=1,
+            max_row=min(demand_sheet.max_row, 20),
+            values_only=True,
+        ),
+        start=1,
+    ):
+        normalized_values = [normalize_excel_label(cell) for cell in row]
+        candidate_indexes = {}
+
+        for field, field_aliases in aliases.items():
+            for index, label in enumerate(normalized_values):
+                if label in field_aliases:
+                    candidate_indexes[field] = index
+                    break
+
+        if all(field in candidate_indexes for field in aliases):
+            header_row_number = row_number
+            header_indexes = candidate_indexes
+            header_values = row
+            break
+
+    if header_row_number is None:
+        errors.append(
+            "A folha 5_PROCURA deve ter as três colunas obrigatórias: "
+            "Referência, Caixas/Quantidade e Data de entrega."
+        )
+        return errors
+
+    non_empty_header_indexes = [
+        index
+        for index, value in enumerate(header_values)
+        if normalize_excel_label(value)
+    ]
+    expected_indexes = sorted(header_indexes.values())
+    unexpected_indexes = [
+        index
+        for index in non_empty_header_indexes
+        if index not in expected_indexes
+    ]
+
+    if unexpected_indexes:
+        unexpected_names = [
+            str(header_values[index]).strip()
+            for index in unexpected_indexes
+            if header_values[index] is not None
+        ]
+        errors.append(
+            "A folha 5_PROCURA deve conter apenas 3 colunas úteis. "
+            "Colunas extra encontradas: " + ", ".join(unexpected_names) + "."
+        )
+
+    demand_rows = 0
+    invalid_rows = []
+
+    for row_number, row in enumerate(
+        demand_sheet.iter_rows(
+            min_row=header_row_number + 1,
+            max_row=demand_sheet.max_row,
+            values_only=True,
+        ),
+        start=header_row_number + 1,
+    ):
+        ref_value = row[header_indexes["ref_id"]]
+
+        if ref_value is None or str(ref_value).strip() == "":
+            continue
+
+        demand_rows += 1
+        boxes_value = row[header_indexes["master_boxes"]]
+        delivery_value = row[header_indexes["delivery_date"]]
+
+        if boxes_value is None or delivery_value is None:
+            invalid_rows.append(row_number)
+
+    if demand_rows == 0:
+        errors.append("A folha 5_PROCURA não contém linhas de procura.")
+
+    if invalid_rows:
+        errors.append(
+            "A folha 5_PROCURA tem linhas com quantidade ou entrega em falta: "
+            + ", ".join(str(row_number) for row_number in invalid_rows[:10])
+            + ("..." if len(invalid_rows) > 10 else "")
+            + "."
+        )
+
+    try:
+        uploaded_excel.seek(0)
+    except Exception:
+        pass
+
+    return errors
 
 
 def format_date(value):
@@ -4188,6 +4373,21 @@ def render_configuration_plan():
 
     if uploaded_excel is None:
         st.info("Aguardando ficheiro Excel. Arraste o ficheiro para a caixa acima ou clique nela para selecionar.")
+        return
+
+    workbook_errors = validate_input_workbook(uploaded_excel)
+
+    if workbook_errors:
+        st.error(
+            "O ficheiro carregado não cumpre o standard obrigatório do modelo."
+        )
+        for error in workbook_errors:
+            st.warning(error)
+        st.info(
+            "O ficheiro deve conter as folhas 2_REFERENCIAS, 3_SETUPS e 5_PROCURA. "
+            "A folha 5_PROCURA deve conter apenas as três colunas úteis: "
+            "Referência, Caixas/Quantidade e Data de entrega."
+        )
         return
     
     try:
