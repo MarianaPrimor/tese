@@ -1168,9 +1168,9 @@ def build_capacity_what_if_df(instance):
             "Turnos atuais": shifts,
             "Turnos no cenário": shifts,
             "Início atual": format_time_from_minutes(start_min),
-            "Início no cenário": time_from_minutes(start_min),
+            "Início no cenário": format_time_from_minutes(start_min),
             "Fim atual": format_time_from_minutes(end_min),
-            "Fim no cenário": time_from_minutes(end_min),
+            "Fim no cenário": format_time_from_minutes(end_min),
         })
 
     return pd.DataFrame(rows)
@@ -2596,16 +2596,14 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
                 required=True,
             ),
             "Início atual": st.column_config.TextColumn(),
-            "Início no cenário": st.column_config.TimeColumn(
+            "Início no cenário": st.column_config.TextColumn(
                 "Início no cenário",
-                format="HH:mm",
-                required=True,
+                help="Formato HH:MM, por exemplo 08:00.",
             ),
             "Fim atual": st.column_config.TextColumn(),
-            "Fim no cenário": st.column_config.TimeColumn(
+            "Fim no cenário": st.column_config.TextColumn(
                 "Fim no cenário",
-                format="HH:mm",
-                required=True,
+                help="Formato HH:MM, por exemplo 16:30.",
             ),
         },
         disabled=[
