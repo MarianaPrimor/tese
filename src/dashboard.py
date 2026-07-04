@@ -312,6 +312,12 @@ def normalize_calendar_date(value):
     if hasattr(value, "date"):
         return value.date()
 
+    if isinstance(value, str):
+        parsed_date = pd.to_datetime(value, dayfirst=True, errors="coerce")
+
+        if not pd.isna(parsed_date):
+            return parsed_date.date()
+
     return value
 
 
