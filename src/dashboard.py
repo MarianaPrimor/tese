@@ -43,7 +43,7 @@ MUTATION_RATE = 0.057
 ELITE_SIZE = 5
 TOURNAMENT_SIZE = 3
 STAGNATION_K = 26
-RANDOM_SEED = 42
+RANDOM_SEED = 45
 EDD_HEURISTIC_RATIO = 0.15
 DEFAULT_OPERATORS = 20
 LUNCH_BREAK_MIN = 30
@@ -77,6 +77,30 @@ def format_time_from_minutes(value):
         return f"+{day_offset}d {hours:02d}:{minutes:02d}"
 
     return f"{hours:02d}:{minutes:02d}"
+
+
+def time_from_minutes(value):
+    value = int(round(value or 0)) % (24 * 60)
+    return time(value // 60, value % 60)
+
+
+def coerce_time_value(value, default):
+    if value is None or pd.isna(value):
+        return default
+
+    if hasattr(value, "hour") and hasattr(value, "minute"):
+        return value
+
+    if isinstance(value, str):
+        value = value.strip()
+        if value:
+            try:
+                hours, minutes = value.split(":", 1)
+                return time(int(hours), int(minutes))
+            except (TypeError, ValueError):
+                return default
+
+    return default
 
 
 def minutes_from_time(value):
@@ -1131,12 +1155,22 @@ def build_capacity_what_if_df(instance):
 
     for day in range(1, instance["n_days"] + 1):
         total_operators = int(get_standard_operators_for_day(instance, day))
+        shifts = int(instance.get("daily_shifts", {}).get(day, 1))
+        start_min = instance.get("daily_shift_start_min", {}).get(day, 8 * 60)
+        total_end_min = instance.get("daily_shift_end_min", {}).get(day, 16 * 60 + 30)
+        end_min = start_min + max(0, total_end_min - start_min) / max(1, shifts)
 
         rows.append({
             "Dia": day,
             "Data": get_production_date(instance, day),
             "Operadores atuais": total_operators,
             "Operadores no cenário": total_operators,
+            "Turnos atuais": shifts,
+            "Turnos no cenário": shifts,
+            "Início atual": format_time_from_minutes(start_min),
+            "Início no cenário": time_from_minutes(start_min),
+            "Fim atual": format_time_from_minutes(end_min),
+            "Fim no cenário": time_from_minutes(end_min),
         })
 
     return pd.DataFrame(rows)
@@ -1390,16 +1424,66 @@ def get_solution_signature(gene):
     )
 
 
-def make_scenario_instance(instance, demand=None, operators_by_day=None):
+def make_scenario_instance(
+    instance,
+    demand=None,
+    operators_by_day=None,
+    start_times_by_day=None,
+    end_times_by_day=None,
+    shifts_by_day=None,
+):
     scenario_instance = deepcopy(instance)
 
     if demand is not None:
         scenario_instance["demand"] = deepcopy(demand)
 
-    if operators_by_day is not None:
-        scenario_instance["standard_operators_by_day"] = dict(operators_by_day)
-        if operators_by_day:
-            scenario_instance["standard_operators"] = max(operators_by_day.values())
+    if (
+        operators_by_day is not None
+        or start_times_by_day is not None
+        or end_times_by_day is not None
+        or shifts_by_day is not None
+    ):
+        working_days = scenario_instance.get("working_days", [])
+        operators_by_day = dict(
+            operators_by_day
+            or {
+                day: get_standard_operators_for_day(scenario_instance, day)
+                for day in range(1, scenario_instance.get("n_days", 0) + 1)
+            }
+        )
+        start_times_by_day = dict(
+            start_times_by_day
+            or {
+                day: time_from_minutes(
+                    scenario_instance.get("daily_shift_start_min", {}).get(day, 8 * 60)
+                )
+                for day in range(1, scenario_instance.get("n_days", 0) + 1)
+            }
+        )
+        end_times_by_day = dict(
+            end_times_by_day
+            or {
+                day: time_from_minutes(
+                    scenario_instance.get("daily_shift_end_min", {}).get(day, 16 * 60 + 30)
+                )
+                for day in range(1, scenario_instance.get("n_days", 0) + 1)
+            }
+        )
+        shifts_by_day = dict(
+            shifts_by_day
+            or {
+                day: scenario_instance.get("daily_shifts", {}).get(day, 1)
+                for day in range(1, scenario_instance.get("n_days", 0) + 1)
+            }
+        )
+        scenario_instance = apply_dashboard_overrides(
+            scenario_instance,
+            working_days,
+            operators_by_day,
+            start_times_by_day,
+            end_times_by_day,
+            shifts_by_day,
+        )
 
     return scenario_instance
 
@@ -2028,6 +2112,7 @@ def build_new_orders_editor_df():
         "Referência": "",
         "Caixas": None,
         "Entrega": None,
+        "Dia de produção fixo": None,
     }])
 
 
@@ -2058,6 +2143,14 @@ def build_added_demand_orders(instance, edited_new_orders_df):
     refs_by_id = create_refs_by_id(instance)
     added_orders = []
     warnings = []
+    working_days = [
+        normalize_calendar_date(working_day)
+        for working_day in instance.get("working_days", [])
+    ]
+    working_day_index_by_date = {
+        working_day: index + 1
+        for index, working_day in enumerate(working_days)
+    }
 
     if edited_new_orders_df is None or edited_new_orders_df.empty:
         return added_orders, warnings
@@ -2096,14 +2189,41 @@ def build_added_demand_orders(instance, edited_new_orders_df):
                 f"{format_date(adjusted_delivery_date)} por não ser dia útil."
             )
 
-        added_orders.append({
+        fixed_production_date = normalize_calendar_date(
+            row.get("Dia de produção fixo")
+        )
+        fixed_production_day = None
+
+        if fixed_production_date is not None:
+            if fixed_production_date not in working_day_index_by_date:
+                warnings.append(
+                    f"Novo pedido {row_index + 1}: o dia de produção fixo não é dia útil."
+                )
+                continue
+
+            fixed_production_day = working_day_index_by_date[fixed_production_date]
+
+            if fixed_production_day not in get_valid_days_for_ref(instance, ref):
+                warnings.append(
+                    f"Novo pedido {row_index + 1}: a referência {ref_id} não pode "
+                    "ser planeada no dia de produção fixo."
+                )
+                continue
+
+        added_order = {
             "ref_id": ref_id,
             "master_boxes": boxes,
             "delivery_calendar_date": normalize_calendar_date(row.get("Entrega")) or adjusted_delivery_date,
             "adjusted_delivery_date": adjusted_delivery_date,
             "delivery_date": delivery_day,
             "source": "scenario_added_order",
-        })
+        }
+
+        if fixed_production_day is not None:
+            added_order["_fixed_production_day"] = fixed_production_day
+            added_order["_fixed_production_date"] = fixed_production_date
+
+        added_orders.append(added_order)
 
     return added_orders, warnings
 
@@ -2259,14 +2379,84 @@ def render_demand_experiment(instance, baseline_solution, baseline_metrics):
         st.dataframe(pd.DataFrame(movement_rows), width="stretch", hide_index=True)
 
 
+def build_scenario_frozen_orders(
+    baseline_solution,
+    freeze_before_day,
+    original_to_scenario_order_id,
+):
+    locked_orders = {}
+
+    for gene in baseline_solution:
+        original_order_id = gene.get("order_id")
+        day = gene.get("day")
+
+        if (
+            gene.get("postponed")
+            or day is None
+            or day >= freeze_before_day
+            or original_order_id not in original_to_scenario_order_id
+        ):
+            continue
+
+        scenario_order_id = original_to_scenario_order_id[original_order_id]
+        locked_orders[int(scenario_order_id)] = {
+            "day": day,
+            "line": gene.get("line"),
+            "postponed": False,
+            "reason": "scenario_frozen_past",
+        }
+
+    return locked_orders
+
+
+def build_locked_orders_for_added_demand(instance, added_orders, first_added_index):
+    refs_by_id = create_refs_by_id(instance)
+    locked_orders = {}
+    warnings = []
+
+    for added_offset, order in enumerate(added_orders):
+        fixed_day = order.get("_fixed_production_day")
+
+        if fixed_day is None:
+            continue
+
+        ref_id = str(order.get("ref_id", "")).strip()
+        ref = refs_by_id.get(ref_id)
+
+        if ref is None:
+            warnings.append(
+                f"Novo pedido {added_offset + 1}: referência {ref_id} não encontrada."
+            )
+            continue
+
+        valid_lines = valid_lines_for_ref(ref)
+
+        if not valid_lines:
+            warnings.append(
+                f"Novo pedido {added_offset + 1}: referência {ref_id} sem linha válida."
+            )
+            continue
+
+        locked_orders[first_added_index + added_offset] = {
+            "day": fixed_day,
+            "line": valid_lines[0],
+            "postponed": False,
+            "reason": "scenario_fixed_added_order",
+        }
+
+    return locked_orders, warnings
+
+
 def render_combined_scenario_experiment(instance, baseline_solution, baseline_metrics):
-    st.markdown("#### Cenário combinado")
+    st.subheader("Análise de cenários")
     st.caption(
-        "Edite a procura e a disponibilidade de operadores no mesmo cenário. "
-        "O GA volta a correr uma única vez com ambas as alterações aplicadas."
+        "Edite a procura a integrar, fixe dias específicos para novos pedidos, "
+        "ajuste operadores por dia e, se necessário, congele o plano antes de uma data."
     )
 
-    st.markdown("**Procura**")
+    working_days = instance.get("working_days", [])
+
+    st.markdown("**Procura existente a integrar**")
     demand_df = build_demand_experiment_df(instance)
     edited_demand_df = st.data_editor(
         demand_df,
@@ -2288,10 +2478,10 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
     )
     edited_demand_df = update_demand_editor_revenue(edited_demand_df, instance)
 
-    st.markdown("**Novos pedidos do cenário**")
+    st.markdown("**Procura adicional do cenário**")
     st.caption(
         "Adicione pedidos extra apenas para este cenário. "
-        "Se não escolher entrega, é usado o último dia útil do horizonte."
+        "Pode escolher a data de entrega e também um dia de produção fixo."
     )
     new_orders_df = build_new_orders_editor_df()
     edited_new_orders_df = st.data_editor(
@@ -2312,6 +2502,13 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
                 min_value=instance.get("working_days", [date.today()])[0],
                 max_value=instance.get("working_days", [date.today()])[-1],
                 format="DD/MM/YYYY",
+            ),
+            "Dia de produção fixo": st.column_config.DateColumn(
+                "Dia de produção fixo",
+                min_value=instance.get("working_days", [date.today()])[0],
+                max_value=instance.get("working_days", [date.today()])[-1],
+                format="DD/MM/YYYY",
+                help="Opcional. Se preenchido, este pedido fica bloqueado nesse dia.",
             ),
         },
         hide_index=True,
@@ -2334,7 +2531,50 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         instance=instance,
     )
 
-    st.markdown("**Operadores disponíveis**")
+    st.markdown("**Congelamento do plano**")
+    freeze_past = st.checkbox(
+        "Não alterar nada antes de uma data",
+        value=False,
+        help=(
+            "As ordens já planeadas antes da data escolhida ficam bloqueadas. "
+            "O cenário só pode alterar o plano dessa data em diante."
+        ),
+        key="combined_scenario_freeze_past",
+    )
+    freeze_before_day = None
+
+    if freeze_past:
+        if working_days:
+            freeze_date = st.date_input(
+                "Alterar apenas a partir de",
+                value=working_days[min(5, len(working_days) - 1)],
+                min_value=working_days[0],
+                max_value=working_days[-1],
+                format="DD/MM/YYYY",
+                key="combined_scenario_freeze_date",
+            )
+            normalized_freeze_date = normalize_calendar_date(freeze_date)
+            normalized_working_days = [
+                normalize_calendar_date(working_day)
+                for working_day in working_days
+            ]
+            freeze_before_day = normalized_working_days.index(normalized_freeze_date) + 1
+            frozen_preview = [
+                gene for gene in baseline_solution
+                if (
+                    not gene.get("postponed")
+                    and gene.get("day") is not None
+                    and gene.get("day") < freeze_before_day
+                )
+            ]
+            st.info(
+                f"{len(frozen_preview)} ordens planeadas antes de "
+                f"{format_date(normalized_freeze_date)} ficam congeladas."
+            )
+        else:
+            st.warning("O cenário atual não tem calendário de dias úteis.")
+
+    st.markdown("**Operadores e horas de abertura**")
     capacity_df = build_capacity_what_if_df(instance)
     max_operator_option = max(
         int(capacity_df["Operadores atuais"].max()) + 20,
@@ -2350,37 +2590,119 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
                 options=list(range(0, max_operator_option + 1)),
                 required=True,
             ),
+            "Turnos atuais": st.column_config.NumberColumn(format="%d"),
+            "Turnos no cenário": st.column_config.SelectboxColumn(
+                options=[1, 2],
+                required=True,
+            ),
+            "Início atual": st.column_config.TextColumn(),
+            "Início no cenário": st.column_config.TimeColumn(
+                "Início no cenário",
+                format="HH:mm",
+                required=True,
+            ),
+            "Fim atual": st.column_config.TextColumn(),
+            "Fim no cenário": st.column_config.TimeColumn(
+                "Fim no cenário",
+                format="HH:mm",
+                required=True,
+            ),
         },
-        disabled=["Dia", "Data", "Operadores atuais"],
+        disabled=[
+            "Dia",
+            "Data",
+            "Operadores atuais",
+            "Turnos atuais",
+            "Início atual",
+            "Fim atual",
+        ],
         hide_index=True,
         width="stretch",
         height=260,
         key="combined_scenario_capacity_editor",
     )
 
-    if st.button("Simular cenário combinado", type="primary", width="content"):
+    if st.button("Simular cenário", type="primary", width="content"):
         selected_demand = []
+        original_to_scenario_order_id = {}
 
         for _, row in edited_demand_df[edited_demand_df["Incluir"]].iterrows():
             order_index = int(row["Ordem"])
             order = deepcopy(instance.get("demand", [])[order_index])
             order["master_boxes"] = int(max(0, row.get("Caixas", 0) or 0))
+            original_to_scenario_order_id[order_index] = len(selected_demand)
             selected_demand.append(order)
 
+        first_added_index = len(selected_demand)
         selected_demand.extend(deepcopy(added_orders))
 
         operators_by_day = {}
+        shifts_by_day = {}
+        start_times_by_day = {}
+        end_times_by_day = {}
         for _, row in edited_capacity_df.iterrows():
             day = int(row["Dia"])
             operators_by_day[day] = int(
                 max(0, row.get("Operadores no cenário", 0) or 0)
+            )
+            shifts_by_day[day] = int(max(1, row.get("Turnos no cenário", 1) or 1))
+            start_times_by_day[day] = coerce_time_value(
+                row.get("Início no cenário"),
+                time_from_minutes(instance.get("daily_shift_start_min", {}).get(day, 8 * 60)),
+            )
+            end_times_by_day[day] = coerce_time_value(
+                row.get("Fim no cenário"),
+                time_from_minutes(
+                    instance.get("daily_shift_start_min", {}).get(day, 8 * 60)
+                    + max(
+                        0,
+                        instance.get("daily_shift_end_min", {}).get(day, 16 * 60 + 30)
+                        - instance.get("daily_shift_start_min", {}).get(day, 8 * 60),
+                    )
+                    / max(1, instance.get("daily_shifts", {}).get(day, 1))
+                ),
             )
 
         scenario_instance = make_scenario_instance(
             instance,
             demand=selected_demand,
             operators_by_day=operators_by_day,
+            start_times_by_day=start_times_by_day,
+            end_times_by_day=end_times_by_day,
+            shifts_by_day=shifts_by_day,
         )
+
+        locked_orders = {}
+
+        if freeze_past and freeze_before_day is not None:
+            frozen_locked_orders = build_scenario_frozen_orders(
+                baseline_solution,
+                freeze_before_day,
+                original_to_scenario_order_id,
+            )
+            locked_orders.update(frozen_locked_orders)
+
+        added_locked_orders, added_locked_warnings = build_locked_orders_for_added_demand(
+            scenario_instance,
+            added_orders,
+            first_added_index,
+        )
+
+        locked_conflicts = sorted(set(locked_orders).intersection(added_locked_orders))
+        locked_orders.update(added_locked_orders)
+
+        if locked_orders:
+            scenario_instance["locked_orders"] = locked_orders
+
+        for warning in added_locked_warnings:
+            st.warning(warning)
+
+        if locked_conflicts:
+            st.warning(
+                "Alguns bloqueios do cenário tinham o mesmo índice e foram substituídos: "
+                + ", ".join(str(order_id) for order_id in locked_conflicts)
+            )
+
         with st.spinner("A correr o GA para o cenário combinado..."):
             scenario_solution, scenario_metrics, _ = run_dashboard_ga_scenario(
                 scenario_instance,
@@ -2390,13 +2712,14 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         st.session_state["combined_scenario_instance"] = scenario_instance
         st.session_state["combined_scenario_solution"] = scenario_solution
         st.session_state["combined_scenario_metrics"] = scenario_metrics
+        st.session_state["combined_scenario_locked_orders"] = locked_orders
 
     scenario_metrics = st.session_state.get("combined_scenario_metrics")
     scenario_solution = st.session_state.get("combined_scenario_solution")
     scenario_instance = st.session_state.get("combined_scenario_instance")
 
     if scenario_metrics is None or scenario_solution is None or scenario_instance is None:
-        st.info("Edite a procura e/ou os operadores e clique em Simular cenário combinado.")
+        st.info("Edite a procura, operadores e/ou congelamento e clique em Simular cenário.")
         return
 
     total_boxes = max(
@@ -2410,13 +2733,17 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         scenario_metrics,
     )
 
-    kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
+    kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
     kpi_col1.metric("Cumprimento por caixas", f"{box_fulfilment_rate:.1f}%")
     kpi_col2.metric(
         "Valor produzido",
         f"€{scenario_metrics.get('scheduled_economic_value', 0):,.0f}",
     )
     kpi_col3.metric("Utilização de capacidade", f"{capacity_utilization:.1f}%")
+    kpi_col4.metric(
+        "Ordens bloqueadas",
+        len(st.session_state.get("combined_scenario_locked_orders", {})),
+    )
 
     comparison_df = build_what_if_comparison_df(
         baseline_metrics,
@@ -2646,39 +2973,26 @@ def build_daily_product_schedule_df(instance, plan_df, metrics):
         {line: index for index, line in enumerate(instance["final_lines"])}
     )
 
-    products_by_day = {}
-    max_products = 0
+    rows = []
 
     for day in range(1, instance["n_days"] + 1):
         day_products = scheduled_df[scheduled_df["Day"] == day].sort_values(
             ["_line_order", "Seq."]
         )
-        products_by_day[day] = day_products
-        max_products = max(max_products, len(day_products))
 
-    rows = []
-
-    for day in range(1, instance["n_days"] + 1):
-        row = {
-            "Data de produção": get_production_date(instance, day),
-            "Dia": day,
-            "Turnos": instance.get("daily_shifts", {}).get(day, 1),
-        }
-
-        for position, (_, product) in enumerate(
-            products_by_day[day].iterrows(),
-            start=1,
-        ):
-            row[f"Linha {position}"] = product["Line"]
-            row[f"Produto {position}"] = product["Reference"]
-            row[f"Nome {position}"] = product.get("Reference name", "")
-            row[f"Quantidade {position}"] = product["Master boxes"]
-
-        for position in range(len(products_by_day[day]) + 1, max_products + 1):
-            row[f"Linha {position}"] = ""
-            row[f"Produto {position}"] = ""
-            row[f"Nome {position}"] = ""
-            row[f"Quantidade {position}"] = ""
+        for _, product in day_products.iterrows():
+            rows.append({
+                "Data de produção": get_production_date(instance, day),
+                "Dia": day,
+                "Turnos": instance.get("daily_shifts", {}).get(day, 1),
+                "Linha": product["Line"],
+                "Sequência": product["Seq."],
+                "Produto": product["Reference"],
+                "Nome": product.get("Reference name", ""),
+                "Quantidade": product["Master boxes"],
+                "Setup (min)": product.get("Setup time (min)", 0),
+                "Tempo de produção (min)": product.get("Production time (min)", 0),
+            })
 
         max_utilization = 0
         max_excess = 0
@@ -2700,13 +3014,29 @@ def build_daily_product_schedule_df(instance, plan_df, metrics):
             max_utilization = max(max_utilization, utilization)
 
         if max_excess > get_capacity_tolerance_for_day(instance, day):
-            row["Estado"] = "Sobrecarga"
+            day_status = "Sobrecarga"
         elif max_utilization >= 90:
-            row["Estado"] = "Perto do limite"
+            day_status = "Perto do limite"
         else:
-            row["Estado"] = "OK"
+            day_status = "OK"
 
-        rows.append(row)
+        if day_products.empty:
+            rows.append({
+                "Data de produção": get_production_date(instance, day),
+                "Dia": day,
+                "Turnos": instance.get("daily_shifts", {}).get(day, 1),
+                "Linha": "",
+                "Sequência": "",
+                "Produto": "",
+                "Nome": "",
+                "Quantidade": "",
+                "Setup (min)": "",
+                "Tempo de produção (min)": "",
+                "Estado": day_status,
+            })
+        else:
+            for row in rows[-len(day_products):]:
+                row["Estado"] = day_status
 
     return pd.DataFrame(rows)
 
@@ -3082,7 +3412,7 @@ def render_scenario_analysis():
         width="stretch",
     )
     st.caption(
-        "Cada ponto usa a semente aleatória 42 e os mesmos parâmetros do plano principal. "
+        "Cada ponto usa a semente aleatória 45 e os mesmos parâmetros do plano principal. "
         "Os resultados ficam guardados durante a sessão."
     )
 
@@ -4113,11 +4443,35 @@ def render_configuration_plan():
     st.success(f"Plano gerado com sucesso para {planning_month}.")
     plan_df = build_plan_df(instance, best_solution)
     simple_plan_df = build_simple_daily_plan_df(instance, plan_df)
-    daily_product_schedule_df = build_daily_product_schedule_df(
-        instance,
-        plan_df,
-        best_metrics,
+    daily_product_schedule_df = (
+        plan_df[
+            (plan_df["Status"] == "Scheduled")
+            & (plan_df["Line"].isin(instance["final_lines"]))
+        ]
+        .sort_values(["Day", "Line", "Seq."])
+        .rename(columns={
+            "Production date": "Data de produção",
+            "Day": "Dia",
+            "Line": "Linha",
+            "Seq.": "Sequência",
+            "Reference": "Produto",
+            "Reference name": "Nome",
+            "Master boxes": "Quantidade",
+            "Setup time (min)": "Setup (min)",
+            "Production time (min)": "Tempo de produção (min)",
+        })
     )
+    daily_product_schedule_df = daily_product_schedule_df[[
+        "Data de produção",
+        "Dia",
+        "Linha",
+        "Sequência",
+        "Produto",
+        "Nome",
+        "Quantidade",
+        "Setup (min)",
+        "Tempo de produção (min)",
+    ]]
     capacity_df = build_capacity_df(instance, best_metrics)
     time_slot_df = build_time_slot_activity_df(instance, best_metrics)
     
@@ -4374,17 +4728,13 @@ def render_dynamic_replanning_tab():
         except Exception as exc:
             st.error(f"Não foi possível replanear: {exc}")
     
-plan_tab, replanning_tab, scenarios_tab = st.tabs([
+plan_tab, scenarios_tab = st.tabs([
     "Plano de produção",
-    "Replaneamento dinâmico",
     "Análise de cenários",
 ])
 
 with plan_tab:
     render_configuration_plan()
-
-with replanning_tab:
-    render_dynamic_replanning_tab()
 
 with scenarios_tab:
     scenario_context = get_ga_context()
