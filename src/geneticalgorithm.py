@@ -1,4 +1,4 @@
-from copy import deepcopy
+﻿from copy import deepcopy
 import random
 import time
 
@@ -89,7 +89,7 @@ def apply_locked_orders(solution, instance):
     return solution
 
 
-def generate_edd_solution(instance, seed=42):
+def generate_edd_solution(instance, seed=45):
     rng = random.Random(seed)
     refs_by_id = create_refs_by_id(instance)
     decorated_orders = []
@@ -357,7 +357,7 @@ def mutate(
 ):
     mutated_solution = deepcopy(solution)
 
-    # Swap mutation: exchanges the position of two orders
+    # Swap mutation: exchanges the position of two orders.
     if random.random() < mutation_rate and len(mutated_solution) >= 2:
         i, j = random.sample(range(len(mutated_solution)), 2)
 
@@ -366,15 +366,41 @@ def mutate(
             mutated_solution[i]
         )
 
-    # Insertion mutation: removes one order and inserts it elsewhere
+    # Insertion mutation: removes one order and inserts it elsewhere.
     if random.random() < mutation_rate and len(mutated_solution) >= 2:
         i, j = random.sample(range(len(mutated_solution)), 2)
 
         gene = mutated_solution.pop(i)
         mutated_solution.insert(j, gene)
 
-    return mutated_solution
+    # Day-assignment mutation: moves one order to another valid production day.
+    # The production line is not reassigned; line compatibility remains fixed.
+    if random.random() < mutation_rate and mutated_solution:
+        refs_by_id = create_refs_by_id(instance)
+        candidate_indices = [
+            index
+            for index, gene in enumerate(mutated_solution)
+            if not gene.get("locked")
+            and str(gene.get("ref_id", "")).strip() in refs_by_id
+        ]
 
+        if candidate_indices:
+            index = random.choice(candidate_indices)
+            gene = mutated_solution[index]
+            ref = refs_by_id[str(gene["ref_id"]).strip()]
+            valid_days = get_valid_days_for_ref(instance, ref)
+            current_day = gene.get("day")
+            valid_day_alternatives = [
+                day
+                for day in valid_days
+                if day != current_day
+            ]
+
+            if valid_day_alternatives:
+                gene["day"] = random.choice(valid_day_alternatives)
+                gene["postponed"] = False
+
+    return mutated_solution
 
 def get_economic_value_for_repair(gene, ref):
     return (
@@ -624,7 +650,7 @@ def reinsert_postponed_orders(solution, instance, max_values, weights):
     while inserted:
         inserted = False
         best_candidate = None
-        best_score = None
+        best_score = current_score
 
         postponed_genes = sorted(
             (
@@ -666,7 +692,7 @@ def reinsert_postponed_orders(solution, instance, max_values, weights):
                         weights=weights,
                     )
 
-                    if best_candidate is None or candidate_score < best_score:
+                    if candidate_score < best_score:
                         best_score = candidate_score
                         best_candidate = candidate
 
@@ -686,7 +712,7 @@ def run_genetic_algorithm(
     population_size=108,
     generations=200,
     mutation_rate=0.057,
-    elite_size=5,
+    elite_size=None,
     tournament_size=3,
     stagnation_k=26,
     seed=0,
@@ -698,6 +724,10 @@ def run_genetic_algorithm(
     start_time = time.perf_counter()
     random.seed(seed)
     max_values = compute_max_values(instance)
+    if elite_size is None:
+        elite_size = max(1, int(round(population_size * 0.10)))
+    else:
+        elite_size = max(1, min(int(elite_size), population_size))
 
     if verbose:
         print(
@@ -800,11 +830,7 @@ def run_genetic_algorithm(
 
 
         new_population = [
-            enforce_hard_constraints(
-                solution,
-                instance,
-                objective_weights=objective_weights,
-            )
+            deepcopy(solution)
             for solution in population[:elite_size]
         ]
 
@@ -928,12 +954,15 @@ if __name__ == "__main__":
         population_size=108,
         generations=200,
         mutation_rate=0.057,
-        elite_size=5,
+        elite_size=None,
         tournament_size=3,
         stagnation_k=26,
-        seed=42,
+        seed=45,
     )
 
     print_solution(best_solution)
     print_metrics(best_metrics)
     
+
+
+

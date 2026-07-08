@@ -23,13 +23,16 @@ FINISHING_LUNCH_END = 14 * 60
 # ============================================================
 
 
-POSTPONEMENT_NORMALIZED_WEIGHT = 0.3
-ECONOMIC_VALUE_NORMALIZED_WEIGHT = 0.2
-DELAY_NORMALIZED_WEIGHT = 0.05
-SETUP_NORMALIZED_WEIGHT = 0.025
-CAPACITY_UTILIZATION_NORMALIZED_WEIGHT = 0.4
-OPERATOR_UTILIZATION_NORMALIZED_WEIGHT = 0.025
+POSTPONEMENT_NORMALIZED_WEIGHT = 0.22
+ECONOMIC_VALUE_NORMALIZED_WEIGHT = 0.18
+DELAY_NORMALIZED_WEIGHT = 0.13
+SETUP_NORMALIZED_WEIGHT = 0.13
+CAPACITY_UTILIZATION_NORMALIZED_WEIGHT = 0.26
+OPERATOR_UTILIZATION_NORMALIZED_WEIGHT = 0.08
 CAPACITY_TOLERANCE_MIN = 30
+POSTPONED_VOLUME_REFERENCE_BOXES = 20000
+DELAY_REFERENCE_ORDER_DAYS = 200
+SETUP_REFERENCE_MIN_PER_TRANSITION = 15
 
 
 # ============================================================
@@ -117,12 +120,7 @@ def compute_max_values(instance):
             master_boxes
             * (ref.get("economic_value_per_master_box") or 0)
         )
-
-    max_setup_transition = max(
-        instance.get("setups_matrix", {}).values(),
-        default=0,
-    )
-    max_setup_time = len(demand) * max_setup_transition
+    max_setup_time = len(demand) * SETUP_REFERENCE_MIN_PER_TRANSITION
     max_operator_minutes = 0
     max_capacity_time = 0
 
@@ -145,8 +143,8 @@ def compute_max_values(instance):
         )
 
     return {
-        "postponed_volume": max(1, total_master_boxes),
-        "delay_days": max(1, len(demand) * instance.get("n_days", 0)),
+        "postponed_volume": max(1, POSTPONED_VOLUME_REFERENCE_BOXES),
+        "delay_days": max(1, DELAY_REFERENCE_ORDER_DAYS),
         "setup_time": max(1, max_setup_time),
         "economic_value": max(1, total_economic_value),
         "capacity_time": max(1, max_capacity_time),
@@ -237,7 +235,7 @@ def normalised_fitness(metrics, max_values, weights=None):
 # RANDOM SOLUTION GENERATION
 # ============================================================
 
-def generate_random_solution(instance, seed=42):
+def generate_random_solution(instance, seed=45):
     random.seed(seed)
 
     refs_by_id = create_refs_by_id(instance)
@@ -251,9 +249,20 @@ def generate_random_solution(instance, seed=42):
         if ref_id not in refs_by_id:
             print(
                 f"WARNING: demand ref_id {ref_id} not found in references. "
-                f"Skipping order."
+                f"Keeping order postponed."
             )
             skipped_orders += 1
+            solution.append({
+                "order_id": order_index,
+                "ref_id": ref_id,
+                "master_boxes": order["master_boxes"],
+                "delivery_date": order["delivery_date"],
+                "delivery_calendar_date": order.get("delivery_calendar_date"),
+                "adjusted_delivery_date": order.get("adjusted_delivery_date"),
+                "day": None,
+                "line": None,
+                "postponed": True,
+            })
             continue
 
         ref = refs_by_id[ref_id]
@@ -283,7 +292,7 @@ def generate_random_solution(instance, seed=42):
         })
 
     if skipped_orders > 0:
-        print(f"WARNING: skipped {skipped_orders} demand orders.")
+        print(f"WARNING: kept {skipped_orders} unknown-reference demand orders postponed.")
 
     random.shuffle(solution)
 
@@ -1247,11 +1256,20 @@ if __name__ == "__main__":
 
     instance = load_real_instance(instance_path)
 
-    solution = generate_random_solution(instance, seed=42)
+    solution = generate_random_solution(instance, seed=45)
 
     metrics = evaluate_solution(solution, instance)
 
     print_solution(solution)
 
     print_metrics(metrics)
+
+
+
+
+
+
+
+
+
 
