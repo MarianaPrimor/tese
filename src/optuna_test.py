@@ -3,6 +3,7 @@ import csv
 import json
 import statistics
 import time
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import optuna
@@ -224,7 +225,7 @@ def objective(trial):
     stagnation_k = trial.suggest_int("stagnation_k", 10, 60)
 
     run_results = []
-    completed_runs = 0
+    pending_runs = []
     total_runs = len(instances) * len(SEEDS_FOR_GA)
 
     for instance_name, instance_data in instances.items():
@@ -239,23 +240,52 @@ def objective(trial):
             cached = seed_cache.get(key)
 
             if cached is not None:
-                fitness = float(cached["fitness"])
-                generations = int(cached["generations"])
-                elapsed = float(cached["elapsed_s"])
+                result = {
+                    "instance_name": instance_name,
+                    "seed": seed,
+                    "fitness": float(cached["fitness"]),
+                    "generations": int(cached["generations"]),
+                    "elapsed_s": float(cached["elapsed_s"]),
+                }
+                run_results.append(result)
                 print(
                     f"Trial {trial.number} {instance_name} seed {seed}: "
-                    f"using checkpoint fitness={fitness:.8f}",
+                    f"using checkpoint fitness={result['fitness']:.8f}",
                     flush=True,
                 )
             else:
-                result = run_seed_evaluation(
+                pending_runs.append((instance_name, instance_data, seed, key))
+
+    completed_runs = len(run_results)
+    if completed_runs:
+        running_mean = sum(item["fitness"] for item in run_results) / completed_runs
+        trial.set_user_attr("completed_seed_runs", completed_runs)
+        trial.report(running_mean, step=completed_runs)
+
+    if pending_runs:
+        max_workers = min(total_runs, len(pending_runs))
+        print(
+            f"Trial {trial.number}: running {len(pending_runs)} seed/instance "
+            f"evaluations in parallel with {max_workers} workers.",
+            flush=True,
+        )
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            future_to_run = {
+                executor.submit(
+                    run_seed_evaluation,
                     instance_name,
                     instance_data,
                     population_size,
                     mutation_rate,
                     stagnation_k,
                     seed,
-                )
+                ): (instance_name, seed, key)
+                for instance_name, instance_data, seed, key in pending_runs
+            }
+
+            for future in as_completed(future_to_run):
+                instance_name, seed, key = future_to_run[future]
+                result = future.result()
                 fitness = result["fitness"]
                 generations = result["generations"]
                 elapsed = result["elapsed_s"]
@@ -271,6 +301,8 @@ def objective(trial):
                     "generations": generations,
                     "elapsed_s": f"{elapsed:.3f}",
                 }
+                run_results.append(result)
+                completed_runs += 1
                 save_seed_cache()
                 print(
                     f"Trial {trial.number} {instance_name} seed {seed}: "
@@ -279,20 +311,9 @@ def objective(trial):
                     flush=True,
                 )
 
-            run_results.append({
-                "instance_name": instance_name,
-                "seed": seed,
-                "fitness": fitness,
-                "generations": generations,
-                "elapsed_s": elapsed,
-            })
-            completed_runs += 1
-            running_mean = sum(item["fitness"] for item in run_results) / len(run_results)
-            trial.set_user_attr("completed_seed_runs", completed_runs)
-            trial.report(running_mean, step=completed_runs)
-
-            if trial.should_prune() and completed_runs < total_runs:
-                raise optuna.TrialPruned()
+                running_mean = sum(item["fitness"] for item in run_results) / len(run_results)
+                trial.set_user_attr("completed_seed_runs", completed_runs)
+                trial.report(running_mean, step=completed_runs)
 
     fitnesses = [item["fitness"] for item in run_results]
     mean_fitness = sum(fitnesses) / len(fitnesses)
