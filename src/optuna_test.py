@@ -351,6 +351,67 @@ def export_study(study, trial=None):
     )
 
 
+
+def bootstrap_study_from_results_csv(study):
+    complete_trials = [
+        trial
+        for trial in study.trials
+        if trial.state == optuna.trial.TrialState.COMPLETE
+    ]
+    if complete_trials or not RESULTS_FILE.exists() or RESULTS_FILE.stat().st_size <= 1:
+        return
+
+    try:
+        df = pd.read_csv(RESULTS_FILE)
+    except Exception as exc:
+        print(f"Could not read existing results CSV for bootstrap: {exc}", flush=True)
+        return
+
+    if df.empty or "state" not in df.columns or "value" not in df.columns:
+        return
+
+    restored = 0
+    for _, row in df.iterrows():
+        if str(row.get("state", "")).upper() != "COMPLETE":
+            continue
+
+        try:
+            params = {
+                "population_size": int(row["params_population_size"]),
+                "mutation_rate": float(row["params_mutation_rate"]),
+                "stagnation_k": int(row["params_stagnation_k"]),
+            }
+            value = float(row["value"])
+        except Exception:
+            continue
+
+        user_attrs = {}
+        for col, val in row.items():
+            if col.startswith("user_attrs_") and not pd.isna(val):
+                user_attrs[col.replace("user_attrs_", "", 1)] = val
+
+        trial = optuna.trial.create_trial(
+            params=params,
+            distributions={
+                "population_size": optuna.distributions.IntDistribution(50, 250),
+                "mutation_rate": optuna.distributions.FloatDistribution(0.01, 0.15),
+                "stagnation_k": optuna.distributions.IntDistribution(10, 60),
+            },
+            value=value,
+            user_attrs=user_attrs,
+        )
+        try:
+            study.add_trial(trial)
+            restored += 1
+        except ValueError:
+            pass
+
+    if restored:
+        print(
+            f"Bootstrapped {restored} completed trials from {RESULTS_FILE.name}.",
+            flush=True,
+        )
+
 def recover_interrupted_trials(study):
     interrupted = [
         trial
@@ -407,6 +468,7 @@ def main():
         load_if_exists=True,
         sampler=optuna.samplers.TPESampler(seed=42),
     )
+    bootstrap_study_from_results_csv(study)
     recover_interrupted_trials(study)
     export_study(study)
 
