@@ -7,10 +7,6 @@ on:
         description: "Operadores produtivos disponiveis por dia"
         required: true
         default: "20"
-      seed:
-        description: "Seed unica para esta validacao"
-        required: true
-        default: "45"
       june_non_working_dates:
         description: "Dias sem planeamento em junho, separados por virgulas (YYYY-MM-DD)"
         required: false
@@ -26,13 +22,14 @@ on:
 
 jobs:
   validate-average:
-    name: "average_optima | ${{ matrix.instance }} | seed ${{ inputs.seed }}"
+    name: "average_optima | ${{ matrix.instance }} | seed ${{ matrix.seed }}"
     runs-on: ubuntu-latest
     timeout-minutes: 720
     strategy:
       fail-fast: false
       matrix:
         instance: [june, july, august]
+        seed: [42, 43, 44]
 
     steps:
       - name: Checkout repository
@@ -79,7 +76,7 @@ jobs:
             --stagnation-k "$STAGNATION_K" \
             --instance "${{ matrix.instance }}" \
             --instance-file "$INSTANCE_FILE" \
-            --seed "${{ inputs.seed }}" \
+            --seed "${{ matrix.seed }}" \
             --operators "${{ inputs.operators }}" \
             --non-working-dates "$NON_WORKING_DATES"
 
@@ -87,7 +84,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: average-parameter-validation-${{ matrix.instance }}
+          name: average-parameter-validation-${{ matrix.instance }}-seed-${{ matrix.seed }}
           path: src/candidate_parameter_validation/raw_*.csv
           if-no-files-found: warn
           retention-days: 30
@@ -135,3 +132,4 @@ jobs:
           path: src/candidate_parameter_validation/
           if-no-files-found: warn
           retention-days: 30
+
