@@ -22,7 +22,7 @@ DEFAULT_INSTANCE_FILES = {
 N_TRIALS = 50
 MAX_GENERATIONS = 200
 SEEDS_FOR_GA = [42, 43, 44]
-OBJECTIVE_VERSION = "normalised_v4_multi_instance_3seeds"
+OBJECTIVE_VERSION = "normalised_v5_new_algorithm_3seeds"
 
 SEED_CACHE_FIELDS = [
     "objective_version",

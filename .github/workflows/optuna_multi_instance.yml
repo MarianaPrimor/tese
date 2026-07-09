@@ -33,12 +33,15 @@ jobs:
       matrix:
         include:
           - instance: june
+            study_suffix: june_new_algo
             instance_file: Inputs_June.xlsx
             non_working_dates: ${{ inputs.june_non_working_dates }}
           - instance: july
+            study_suffix: july_new_algo
             instance_file: Inputs_July.xlsx
             non_working_dates: ${{ inputs.july_non_working_dates }}
           - instance: august
+            study_suffix: august_new_algo
             instance_file: Inputs_August.xlsx
             non_working_dates: ${{ inputs.august_non_working_dates }}
 
@@ -50,13 +53,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            src/optuna_study_${{ matrix.instance }}_v1.db
-            src/optuna_results_${{ matrix.instance }}_v1.csv
-            src/optuna_seed_checkpoint_${{ matrix.instance }}_v1.csv
-            src/optuna_configuration_${{ matrix.instance }}_v1.json
-          key: optuna-${{ matrix.instance }}-v1-${{ github.run_id }}
+            src/optuna_study_${{ matrix.study_suffix }}_v1.db
+            src/optuna_results_${{ matrix.study_suffix }}_v1.csv
+            src/optuna_seed_checkpoint_${{ matrix.study_suffix }}_v1.csv
+            src/optuna_configuration_${{ matrix.study_suffix }}_v1.json
+          key: optuna-${{ matrix.study_suffix }}-v1-${{ github.run_id }}
           restore-keys: |
-            optuna-${{ matrix.instance }}-v1-
+            optuna-${{ matrix.study_suffix }}-v1-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -73,26 +76,26 @@ jobs:
       - name: Run Optuna study
         run: |
           python src/optuna_test.py \
-            --study-suffix "${{ matrix.instance }}" \
+            --study-suffix "${{ matrix.study_suffix }}" \
             --operators "${{ inputs.operators }}" \
             --instance-file "${{ matrix.instance_file }}" \
             --non-working-dates "${{ matrix.non_working_dates }}"
 
       - name: Generate Optuna figures
         if: always()
-        run: python src/generate_optuna_figures.py --study-suffix "${{ matrix.instance }}"
+        run: python src/generate_optuna_figures.py --study-suffix "${{ matrix.study_suffix }}"
         continue-on-error: true
 
       - name: Upload study results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: optuna-${{ matrix.instance }}-study
+          name: optuna-${{ matrix.instance }}-new-algo-study
           path: |
-            src/optuna_study_${{ matrix.instance }}_v1.db
-            src/optuna_results_${{ matrix.instance }}_v1.csv
-            src/optuna_seed_checkpoint_${{ matrix.instance }}_v1.csv
-            src/optuna_configuration_${{ matrix.instance }}_v1.json
+            src/optuna_study_${{ matrix.study_suffix }}_v1.db
+            src/optuna_results_${{ matrix.study_suffix }}_v1.csv
+            src/optuna_seed_checkpoint_${{ matrix.study_suffix }}_v1.csv
+            src/optuna_configuration_${{ matrix.study_suffix }}_v1.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -100,7 +103,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: optuna-${{ matrix.instance }}-figures
-          path: src/optuna_figures_${{ matrix.instance }}_v1/
+          name: optuna-${{ matrix.instance }}-new-algo-figures
+          path: src/optuna_figures_${{ matrix.study_suffix }}_v1/
           if-no-files-found: warn
           retention-days: 30
