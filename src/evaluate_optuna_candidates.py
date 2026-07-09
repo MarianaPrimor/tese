@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import csv
 import statistics
 import time
@@ -28,6 +28,36 @@ DEFAULT_RESULT_FILES = {
 }
 
 SEEDS = [42, 43, 44]
+MANUAL_CANDIDATES = [
+    {
+        "candidate": "best_june",
+        "source_month": "june",
+        "source_trial": None,
+        "source_mean_fitness": None,
+        "mutation_rate": 0.138525663,
+        "population_size": 225,
+        "stagnation_k": 46,
+    },
+    {
+        "candidate": "best_july",
+        "source_month": "july",
+        "source_trial": None,
+        "source_mean_fitness": None,
+        "mutation_rate": 0.145441108,
+        "population_size": 231,
+        "stagnation_k": 55,
+    },
+    {
+        "candidate": "best_august",
+        "source_month": "august",
+        "source_trial": None,
+        "source_mean_fitness": None,
+        "mutation_rate": 0.149941493,
+        "population_size": 197,
+        "stagnation_k": 54,
+    },
+]
+
 MAX_GENERATIONS = 200
 OUTPUT_DIR = SCRIPT_DIR / "candidate_parameter_validation"
 
@@ -218,10 +248,7 @@ def main():
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    candidates = [
-        load_best_candidate(month, DEFAULT_RESULT_FILES[month])
-        for month in ["june", "july", "august"]
-    ]
+    candidates = MANUAL_CANDIDATES
 
     print("Selected candidates:", flush=True)
     for candidate in candidates:
