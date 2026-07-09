@@ -1,4 +1,4 @@
-name: Optuna - Multi Instance Global
+name: Optuna - Instance Studies
 
 on:
   workflow_dispatch:
@@ -24,10 +24,23 @@ permissions:
   contents: read
 
 jobs:
-  optuna-global-study:
-    name: "Optuna global June-July-August"
+  optuna-instance-study:
+    name: "Optuna ${{ matrix.instance }}"
     runs-on: ubuntu-latest
     timeout-minutes: 720
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - instance: june
+            instance_file: Inputs_June.xlsx
+            non_working_dates: ${{ inputs.june_non_working_dates }}
+          - instance: july
+            instance_file: Inputs_July.xlsx
+            non_working_dates: ${{ inputs.july_non_working_dates }}
+          - instance: august
+            instance_file: Inputs_August.xlsx
+            non_working_dates: ${{ inputs.august_non_working_dates }}
 
     steps:
       - name: Checkout repository
@@ -37,13 +50,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            src/optuna_study_multi_instance_v1.db
-            src/optuna_results_multi_instance_v1.csv
-            src/optuna_seed_checkpoint_multi_instance_v1.csv
-            src/optuna_configuration_multi_instance_v1.json
-          key: optuna-multi-instance-v1-${{ github.run_id }}
+            src/optuna_study_${{ matrix.instance }}_v1.db
+            src/optuna_results_${{ matrix.instance }}_v1.csv
+            src/optuna_seed_checkpoint_${{ matrix.instance }}_v1.csv
+            src/optuna_configuration_${{ matrix.instance }}_v1.json
+          key: optuna-${{ matrix.instance }}-v1-${{ github.run_id }}
           restore-keys: |
-            optuna-multi-instance-v1-
+            optuna-${{ matrix.instance }}-v1-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -57,33 +70,29 @@ jobs:
       - name: Install Optuna visualisation dependencies
         run: pip install optuna plotly "kaleido==0.2.1" scikit-learn
 
-      - name: Run Optuna global study
+      - name: Run Optuna study
         run: |
           python src/optuna_test.py \
-            --study-suffix multi_instance \
+            --study-suffix "${{ matrix.instance }}" \
             --operators "${{ inputs.operators }}" \
-            --june-instance-file Inputs_June.xlsx \
-            --july-instance-file Inputs_July.xlsx \
-            --august-instance-file Inputs_August.xlsx \
-            --june-non-working-dates "${{ inputs.june_non_working_dates }}" \
-            --july-non-working-dates "${{ inputs.july_non_working_dates }}" \
-            --august-non-working-dates "${{ inputs.august_non_working_dates }}"
+            --instance-file "${{ matrix.instance_file }}" \
+            --non-working-dates "${{ matrix.non_working_dates }}"
 
       - name: Generate Optuna figures
         if: always()
-        run: python src/generate_optuna_figures.py --study-suffix multi_instance
+        run: python src/generate_optuna_figures.py --study-suffix "${{ matrix.instance }}"
         continue-on-error: true
 
       - name: Upload study results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: optuna-multi-instance-study
+          name: optuna-${{ matrix.instance }}-study
           path: |
-            src/optuna_study_multi_instance_v1.db
-            src/optuna_results_multi_instance_v1.csv
-            src/optuna_seed_checkpoint_multi_instance_v1.csv
-            src/optuna_configuration_multi_instance_v1.json
+            src/optuna_study_${{ matrix.instance }}_v1.db
+            src/optuna_results_${{ matrix.instance }}_v1.csv
+            src/optuna_seed_checkpoint_${{ matrix.instance }}_v1.csv
+            src/optuna_configuration_${{ matrix.instance }}_v1.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -91,7 +100,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: optuna-multi-instance-figures
-          path: src/optuna_figures_multi_instance_v1/
+          name: optuna-${{ matrix.instance }}-figures
+          path: src/optuna_figures_${{ matrix.instance }}_v1/
           if-no-files-found: warn
           retention-days: 30
