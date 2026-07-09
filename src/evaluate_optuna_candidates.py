@@ -67,7 +67,7 @@ def parse_args():
         description="Evaluate best monthly Optuna parameter candidates across all instances."
     )
     parser.add_argument("--operators", type=int, default=20)
-    parser.add_argument("--workers", type=int, default=9)
+    parser.add_argument("--workers", type=int, default=27)
     parser.add_argument("--june-non-working-dates", default="")
     parser.add_argument("--july-non-working-dates", default="")
     parser.add_argument("--august-non-working-dates", default="")

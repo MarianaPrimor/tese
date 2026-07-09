@@ -1,4 +1,4 @@
-﻿name: Candidate Parameter Validation
+name: Candidate Parameter Validation
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
       workers:
         description: "Numero de corridas paralelas dentro do job"
         required: true
-        default: "9"
+        default: "27"
       june_non_working_dates:
         description: "Dias sem planeamento em junho, separados por virgulas (YYYY-MM-DD)"
         required: false
