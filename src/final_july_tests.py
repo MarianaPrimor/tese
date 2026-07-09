@@ -48,12 +48,12 @@ WEIGHT_LABELS = {
 }
 
 GA_PARAMETERS = {
-    "population_size": 108,
+    "population_size": 218,
     "generations": 200,
-    "mutation_rate": 0.057,
-    "elite_size": 5,
+    "mutation_rate": 0.144636088,
+    "elite_size": None,
     "tournament_size": 3,
-    "stagnation_k": 26,
+    "stagnation_k": 52,
 }
 
 BASELINE_OPERATIONAL_CONFIG = {
@@ -1242,3 +1242,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
