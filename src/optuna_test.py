@@ -19,7 +19,7 @@ DEFAULT_INSTANCE_FILES = {
     "july": (SCRIPT_DIR / "../Inputs_July.xlsx").resolve(),
     "august": (SCRIPT_DIR / "../Inputs_August.xlsx").resolve(),
 }
-N_TRIALS = 30
+DEFAULT_N_TRIALS = 30
 MAX_GENERATIONS = 200
 SEEDS_FOR_GA = [42, 43, 44]
 OBJECTIVE_VERSION = "normalised_v5_new_algorithm_3seeds_30trials"
@@ -60,6 +60,12 @@ def parse_args():
     parser.add_argument("--june-non-working-dates", default="")
     parser.add_argument("--july-non-working-dates", default="")
     parser.add_argument("--august-non-working-dates", default="")
+    parser.add_argument(
+        "--n-trials",
+        type=int,
+        default=DEFAULT_N_TRIALS,
+        help="Target number of completed Optuna trials.",
+    )
     # Backwards-compatible single-instance arguments. If provided, the script runs
     # exactly one instance, which is useful for older workflows or quick checks.
     parser.add_argument("--instance-file", type=Path, default=None)
@@ -68,6 +74,7 @@ def parse_args():
 
 
 ARGS = parse_args()
+N_TRIALS = ARGS.n_trials
 STUDY_SUFFIX = ARGS.study_suffix.strip().lower().replace(" ", "_")
 STUDY_NAME = f"ga_parameter_tuning_{STUDY_SUFFIX}_v1"
 STORAGE_FILE = SCRIPT_DIR / f"optuna_study_{STUDY_SUFFIX}_v1.db"

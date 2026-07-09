@@ -23,6 +23,10 @@ on:
         description: "Run ID anterior para retomar a partir dos artifacts (opcional)"
         required: false
         default: ""
+      target_trials:
+        description: "Numero total de trials completos a atingir"
+        required: true
+        default: "30"
 
 permissions:
   contents: read
@@ -99,7 +103,8 @@ jobs:
             --study-suffix "${{ matrix.study_suffix }}" \
             --operators "${{ inputs.operators }}" \
             --instance-file "${{ matrix.instance_file }}" \
-            --non-working-dates "${{ matrix.non_working_dates }}"
+            --non-working-dates "${{ matrix.non_working_dates }}" \
+            --n-trials "${{ inputs.target_trials }}"
 
       - name: Generate Optuna figures
         if: always()
