@@ -1,0 +1,62 @@
+﻿name: Candidate Parameter Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      operators:
+        description: "Operadores produtivos disponiveis por dia"
+        required: true
+        default: "20"
+      workers:
+        description: "Numero de corridas paralelas dentro do job"
+        required: true
+        default: "9"
+      june_non_working_dates:
+        description: "Dias sem planeamento em junho, separados por virgulas (YYYY-MM-DD)"
+        required: false
+        default: ""
+      july_non_working_dates:
+        description: "Dias sem planeamento em julho, separados por virgulas (YYYY-MM-DD)"
+        required: false
+        default: ""
+      august_non_working_dates:
+        description: "Dias sem planeamento em agosto, separados por virgulas (YYYY-MM-DD)"
+        required: false
+        default: ""
+
+jobs:
+  validate-candidates:
+    name: Validate best monthly parameter candidates
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run candidate validation
+        run: |
+          python src/evaluate_optuna_candidates.py \
+            --operators "${{ inputs.operators }}" \
+            --workers "${{ inputs.workers }}" \
+            --june-non-working-dates "${{ inputs.june_non_working_dates }}" \
+            --july-non-working-dates "${{ inputs.july_non_working_dates }}" \
+            --august-non-working-dates "${{ inputs.august_non_working_dates }}"
+
+      - name: Upload candidate validation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-parameter-validation-results
+          path: src/candidate_parameter_validation/
+          if-no-files-found: warn
+          retention-days: 30
