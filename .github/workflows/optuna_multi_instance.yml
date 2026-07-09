@@ -33,15 +33,15 @@ jobs:
       matrix:
         include:
           - instance: june
-            study_suffix: june_new_algo
+            study_suffix: june_new_algo_30trials
             instance_file: Inputs_June.xlsx
             non_working_dates: ${{ inputs.june_non_working_dates }}
           - instance: july
-            study_suffix: july_new_algo
+            study_suffix: july_new_algo_30trials
             instance_file: Inputs_July.xlsx
             non_working_dates: ${{ inputs.july_non_working_dates }}
           - instance: august
-            study_suffix: august_new_algo
+            study_suffix: august_new_algo_30trials
             instance_file: Inputs_August.xlsx
             non_working_dates: ${{ inputs.august_non_working_dates }}
 
@@ -90,7 +90,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: optuna-${{ matrix.instance }}-new-algo-study
+          name: optuna-${{ matrix.instance }}-new-algo-30trials-study
           path: |
             src/optuna_study_${{ matrix.study_suffix }}_v1.db
             src/optuna_results_${{ matrix.study_suffix }}_v1.csv
@@ -103,7 +103,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: optuna-${{ matrix.instance }}-new-algo-figures
+          name: optuna-${{ matrix.instance }}-new-algo-30trials-figures
           path: src/optuna_figures_${{ matrix.study_suffix }}_v1/
           if-no-files-found: warn
           retention-days: 30

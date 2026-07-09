@@ -19,10 +19,10 @@ DEFAULT_INSTANCE_FILES = {
     "july": (SCRIPT_DIR / "../Inputs_July.xlsx").resolve(),
     "august": (SCRIPT_DIR / "../Inputs_August.xlsx").resolve(),
 }
-N_TRIALS = 50
+N_TRIALS = 30
 MAX_GENERATIONS = 200
 SEEDS_FOR_GA = [42, 43, 44]
-OBJECTIVE_VERSION = "normalised_v5_new_algorithm_3seeds"
+OBJECTIVE_VERSION = "normalised_v5_new_algorithm_3seeds_30trials"
 
 SEED_CACHE_FIELDS = [
     "objective_version",
