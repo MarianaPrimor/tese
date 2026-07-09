@@ -1,0 +1,137 @@
+﻿name: Average Parameter Validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      operators:
+        description: "Operadores produtivos disponiveis por dia"
+        required: true
+        default: "20"
+      seed:
+        description: "Seed unica para esta validacao"
+        required: true
+        default: "45"
+      june_non_working_dates:
+        description: "Dias sem planeamento em junho, separados por virgulas (YYYY-MM-DD)"
+        required: false
+        default: ""
+      july_non_working_dates:
+        description: "Dias sem planeamento em julho, separados por virgulas (YYYY-MM-DD)"
+        required: false
+        default: ""
+      august_non_working_dates:
+        description: "Dias sem planeamento em agosto, separados por virgulas (YYYY-MM-DD)"
+        required: false
+        default: ""
+
+jobs:
+  validate-average:
+    name: "average_optima | ${{ matrix.instance }} | seed ${{ inputs.seed }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 720
+    strategy:
+      fail-fast: false
+      matrix:
+        instance: [june, july, august]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run average-parameter validation job
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          POPULATION_SIZE="218"
+          MUTATION_RATE="0.144636088"
+          STAGNATION_K="52"
+
+          case "${{ matrix.instance }}" in
+            june)
+              INSTANCE_FILE="Inputs_June.xlsx"
+              NON_WORKING_DATES="${{ inputs.june_non_working_dates }}"
+              ;;
+            july)
+              INSTANCE_FILE="Inputs_July.xlsx"
+              NON_WORKING_DATES="${{ inputs.july_non_working_dates }}"
+              ;;
+            august)
+              INSTANCE_FILE="Inputs_August.xlsx"
+              NON_WORKING_DATES="${{ inputs.august_non_working_dates }}"
+              ;;
+          esac
+
+          python src/evaluate_candidate_single.py \
+            --candidate "average_optima" \
+            --source-month "average" \
+            --population-size "$POPULATION_SIZE" \
+            --mutation-rate "$MUTATION_RATE" \
+            --stagnation-k "$STAGNATION_K" \
+            --instance "${{ matrix.instance }}" \
+            --instance-file "$INSTANCE_FILE" \
+            --seed "${{ inputs.seed }}" \
+            --operators "${{ inputs.operators }}" \
+            --non-working-dates "$NON_WORKING_DATES"
+
+      - name: Upload raw validation row
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: average-parameter-validation-${{ matrix.instance }}
+          path: src/candidate_parameter_validation/raw_*.csv
+          if-no-files-found: warn
+          retention-days: 30
+
+  aggregate-results:
+    name: Aggregate average-parameter validation results
+    runs-on: ubuntu-latest
+    needs: validate-average
+    if: always()
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download raw validation rows
+        uses: actions/download-artifact@v4
+        with:
+          pattern: average-parameter-validation-*
+          path: downloaded_average_rows
+          merge-multiple: true
+
+      - name: Restore raw rows into output folder
+        run: |
+          mkdir -p src/candidate_parameter_validation
+          cp downloaded_average_rows/raw_*.csv src/candidate_parameter_validation/
+          ls -la src/candidate_parameter_validation/
+
+      - name: Aggregate validation results
+        run: python src/aggregate_candidate_validation.py
+
+      - name: Upload average validation results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: average-parameter-validation-results
+          path: src/candidate_parameter_validation/
+          if-no-files-found: warn
+          retention-days: 30
