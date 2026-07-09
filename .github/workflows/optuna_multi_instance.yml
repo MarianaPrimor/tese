@@ -19,9 +19,14 @@ on:
         description: "Dias sem planeamento em agosto, separados por virgulas (YYYY-MM-DD)"
         required: false
         default: ""
+      resume_run_id:
+        description: "Run ID anterior para retomar a partir dos artifacts (opcional)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   optuna-instance-study:
@@ -60,6 +65,21 @@ jobs:
           key: optuna-${{ matrix.study_suffix }}-v1-${{ github.run_id }}
           restore-keys: |
             optuna-${{ matrix.study_suffix }}-v1-
+
+      - name: Download previous study artifact
+        if: ${{ inputs.resume_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: optuna-${{ matrix.instance }}-new-algo-30trials-study
+          path: recovered_optuna
+          run-id: ${{ inputs.resume_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Restore downloaded study files
+        if: ${{ inputs.resume_run_id != '' }}
+        run: |
+          find recovered_optuna -type f -name "optuna_*_${{ matrix.study_suffix }}_v1.*" -exec cp {} src/ \;
+          ls -la src/optuna_*_${{ matrix.study_suffix }}_v1.* || true
 
       - name: Set up Python
         uses: actions/setup-python@v5
