@@ -1,4 +1,4 @@
-﻿from copy import deepcopy
+from copy import deepcopy
 import random
 import time
 
@@ -30,7 +30,7 @@ from evaluator import (
 
 def generate_initial_population(
     instance,
-    population_size=200,
+    population_size=218,
     seed=0,
     objective_weights=None,
     heuristic_ratio=0.15,
@@ -89,7 +89,7 @@ def apply_locked_orders(solution, instance):
     return solution
 
 
-def generate_edd_solution(instance, seed=45):
+def generate_edd_solution(instance, seed=52):
     rng = random.Random(seed)
     refs_by_id = create_refs_by_id(instance)
     decorated_orders = []
@@ -353,7 +353,7 @@ def crossover(parent_1, parent_2):
 def mutate(
     solution,
     instance,
-    mutation_rate=0.057,
+    mutation_rate=0.144636088,
 ):
     mutated_solution = deepcopy(solution)
 
@@ -709,12 +709,12 @@ def reinsert_postponed_orders(solution, instance, max_values, weights):
 
 def run_genetic_algorithm(
     instance,
-    population_size=108,
+    population_size=218,
     generations=200,
-    mutation_rate=0.057,
+    mutation_rate=0.144636088,
     elite_size=None,
     tournament_size=3,
-    stagnation_k=26,
+    stagnation_k=52,
     seed=0,
     verbose= True,
     objective_weights=None,
@@ -951,13 +951,13 @@ if __name__ == "__main__":
 
     best_solution, best_metrics = run_genetic_algorithm(
         instance,
-        population_size=108,
+        population_size=218,
         generations=200,
-        mutation_rate=0.057,
+        mutation_rate=0.144636088,
         elite_size=None,
         tournament_size=3,
-        stagnation_k=26,
-        seed=45,
+        stagnation_k=52,
+        seed=52,
     )
 
     print_solution(best_solution)

@@ -389,7 +389,7 @@ def parse_args():
     parser.add_argument("--input", default=str(repo_dir / "Inputs_June.xlsx"))
     parser.add_argument("--output-dir", type=Path,
                         default=repo_dir / "outputs" / "ga_robustness")
-    parser.add_argument("--seed", type=int, default=45)
+    parser.add_argument("--seed", type=int, default=52)
     parser.add_argument("--collect-only", action="store_true")
     parser.add_argument("--population-size", type=int, default=218)
     parser.add_argument("--mutation-rate", type=float, default=0.144636088)
