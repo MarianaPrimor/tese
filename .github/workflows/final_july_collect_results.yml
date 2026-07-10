@@ -1,16 +1,26 @@
-name: Collect Final July Test Results
+name: Collect Final July Core Test Results
 
 on:
   workflow_dispatch:
     inputs:
       source_run_id:
-        description: "Run ID from the failed Final July Scenario Tests workflow"
+        description: "Run ID from the Final July Scenario Tests workflow with Test 1 and Test 4 artifacts"
         required: true
+        type: string
+      operator_resume_run_id:
+        description: "Optional run ID from Resume Final July Operator Test. If empty, uses Test 2 from source_run_id."
+        required: false
+        default: ""
+        type: string
+      operator_artifact_name:
+        description: "Operator artifact name to use when operator_resume_run_id is provided"
+        required: false
+        default: "final-july-test-2-operator-availability-resumed"
         type: string
 
 jobs:
   collect-results:
-    name: "Collect existing final July artifacts"
+    name: "Collect core July tests and generate figures"
     runs-on: ubuntu-latest
 
     steps:
@@ -32,16 +42,57 @@ jobs:
           run-id: ${{ inputs.source_run_id }}
           path: final_july_tests_artifacts
 
+      - name: Download resumed operator artifact
+        if: ${{ inputs.operator_resume_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.operator_artifact_name }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.operator_resume_run_id }}
+          path: resumed_operator_artifact
+
       - name: Reorganize CSVs
         run: |
           mkdir -p final_july_tests_final
           find final_july_tests_artifacts -name "*.csv" -exec cp {} final_july_tests_final/ \;
+          if [ -d resumed_operator_artifact ]; then
+            find resumed_operator_artifact -name "test_2_operator_availability_*.csv" -exec cp {} final_july_tests_final/ \;
+          fi
+
+          echo "CSV files available:"
+          find final_july_tests_final -maxdepth 1 -name "*.csv" -print | sort
+
+          test -f final_july_tests_final/test_1_demand_scaling_raw.csv
           test -f final_july_tests_final/test_1_demand_scaling_summary.csv
+          test -f final_july_tests_final/test_2_operator_availability_raw.csv
           test -f final_july_tests_final/test_2_operator_availability_summary.csv
+          test -f final_july_tests_final/test_4_shift_structure_raw.csv
           test -f final_july_tests_final/test_4_shift_structure_summary.csv
-          for i in 0 1 2 3 4 5; do
-            test -f final_july_tests_final/test_3_weight_sensitivity_summary_weight_${i}.csv
-          done
+          test -f final_july_tests_final/test_4_shift_structure_per_day_shift_utilisation.csv
+
+      - name: Count completed runs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          base = Path("final_july_tests_final")
+          files = {
+              "Test 1 demand scaling": base / "test_1_demand_scaling_raw.csv",
+              "Test 2 operator availability": base / "test_2_operator_availability_raw.csv",
+              "Test 4 shift extension": base / "test_4_shift_structure_raw.csv",
+          }
+          expected = {
+              "Test 1 demand scaling": 15,
+              "Test 2 operator availability": 39,
+              "Test 4 shift extension": 18,
+          }
+          for name, path in files.items():
+              df = pd.read_csv(path)
+              print(f"{name}: {len(df)}/{expected[name]} seed-runs")
+              if name == "Test 2 operator availability":
+                  print(df.groupby("operators")["seed"].nunique().to_string())
+          PY
 
       - name: Generate final figures
         run: >
@@ -49,8 +100,13 @@ jobs:
           --plots-only
           --output-dir final_july_tests_final
 
-      - name: Upload combined results package
+      - name: List generated figures
+        run: |
+          echo "Generated figures:"
+          find final_july_tests_final/plots -type f -name "*.png" -print | sort
+
+      - name: Upload combined core results package
         uses: actions/upload-artifact@v4
         with:
-          name: final-july-tests-all-results-from-run-${{ inputs.source_run_id }}
+          name: final-july-core-tests-all-results-from-run-${{ inputs.source_run_id }}
           path: final_july_tests_final/

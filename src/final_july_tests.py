@@ -403,9 +403,10 @@ def run_test_1(base_instance):
     return rows, summarise(rows, ["demand_factor"])
 
 
-def run_test_2(base_instance):
+def run_test_2(base_instance, operator_counts=None):
     rows = []
-    for operators in OPERATOR_COUNTS:
+    counts = operator_counts if operator_counts is not None else OPERATOR_COUNTS
+    for operators in counts:
         for seed in SEEDS:
             instance = set_uniform_operators(base_instance, operators)
             _solution, metrics = run_ga_case(instance, seed)
@@ -1200,6 +1201,11 @@ def parse_args():
         default=None,
         help="For Test 3 only: run one weight index, 0..5.",
     )
+    parser.add_argument(
+        "--operator-counts",
+        default=None,
+        help="For Test 2 only: comma-separated operator counts to run, e.g. 24,25,26.",
+    )
     return parser.parse_args()
 
 
@@ -1219,7 +1225,14 @@ def main():
         write_csv(output_dir / "test_1_demand_scaling_summary.csv", summary)
 
     if args.test in ("2", "all"):
-        raw, summary = run_test_2(base_instance)
+        operator_counts = None
+        if args.operator_counts:
+            operator_counts = [
+                int(value.strip())
+                for value in args.operator_counts.split(",")
+                if value.strip()
+            ]
+        raw, summary = run_test_2(base_instance, operator_counts=operator_counts)
         write_csv(output_dir / "test_2_operator_availability_raw.csv", raw)
         write_csv(output_dir / "test_2_operator_availability_summary.csv", summary)
 

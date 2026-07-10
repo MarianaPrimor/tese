@@ -1,0 +1,191 @@
+name: Resume Final July Operator Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "Previous workflow run ID with partial/final Test 2 artifact"
+        required: false
+        default: ""
+      artifact_name:
+        description: "Previous artifact name containing Test 2 CSVs"
+        required: false
+        default: "final-july-test-2-operator-availability"
+
+jobs:
+  plan-missing:
+    name: "Plan missing operator levels"
+    runs-on: ubuntu-latest
+    outputs:
+      missing_json: ${{ steps.missing.outputs.missing_json }}
+      completed_runs: ${{ steps.missing.outputs.completed_runs }}
+      remaining_runs: ${{ steps.missing.outputs.remaining_runs }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download previous Test 2 artifact
+        if: ${{ inputs.source_run_id != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.source_run_id }}
+          path: previous_test_2
+
+      - name: Decide missing operator counts
+        id: missing
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json
+          import os
+          import pandas as pd
+
+          all_counts = list(range(18, 31))
+          previous_raw = Path("previous_test_2/test_2_operator_availability_raw.csv")
+          completed_counts = []
+          completed_runs = 0
+
+          if previous_raw.exists():
+              df = pd.read_csv(previous_raw)
+              completed_runs = len(df.drop_duplicates(subset=["operators", "seed"]))
+              for operators, group in df.groupby("operators"):
+                  seeds = set(group["seed"].astype(int))
+                  if {42, 43, 44}.issubset(seeds):
+                      completed_counts.append(int(operators))
+          else:
+              print("No previous raw CSV found. The resume workflow will run all operator counts.")
+
+          missing_counts = [count for count in all_counts if count not in completed_counts]
+          print(f"Completed seed-runs already available: {completed_runs}")
+          print(f"Completed operator levels: {completed_counts}")
+          print(f"Missing operator levels: {missing_counts}")
+          print(f"Remaining seed-runs to execute: {len(missing_counts) * 3}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as handle:
+              handle.write(f"missing_json={json.dumps(missing_counts)}\n")
+              handle.write(f"completed_runs={completed_runs}\n")
+              handle.write(f"remaining_runs={len(missing_counts) * 3}\n")
+          PY
+
+  run-missing-operator:
+    name: "Operator level ${{ matrix.operators }}"
+    needs: plan-missing
+    if: ${{ needs.plan-missing.outputs.missing_json != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        operators: ${{ fromJson(needs.plan-missing.outputs.missing_json) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run one missing operator level
+        run: >
+          python src/final_july_tests.py
+          --test 2
+          --operator-counts "${{ matrix.operators }}"
+          --instance-file Inputs_July.xlsx
+          --output-dir operator_${{ matrix.operators }}
+
+      - name: Upload operator level result
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-july-test-2-operator-${{ matrix.operators }}
+          path: |
+            operator_${{ matrix.operators }}/test_2_operator_availability_raw.csv
+            operator_${{ matrix.operators }}/test_2_operator_availability_summary.csv
+
+  collect-resumed-operator-test:
+    name: "Collect resumed Test 2 results"
+    needs:
+      - plan-missing
+      - run-missing-operator
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download previous Test 2 artifact
+        if: ${{ inputs.source_run_id != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.source_run_id }}
+          path: previous_test_2
+
+      - name: Download new operator artifacts
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          path: new_operator_artifacts
+
+      - name: Merge previous and new Test 2 CSVs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          out = Path("final_july_operator_resume")
+          out.mkdir(parents=True, exist_ok=True)
+
+          raw_files = []
+          previous_raw = Path("previous_test_2/test_2_operator_availability_raw.csv")
+          if previous_raw.exists():
+              raw_files.append(previous_raw)
+          raw_files.extend(Path("new_operator_artifacts").glob("**/test_2_operator_availability_raw.csv"))
+
+          if not raw_files:
+              raise SystemExit("No Test 2 raw CSV files found to merge.")
+
+          raw = pd.concat((pd.read_csv(path) for path in raw_files), ignore_index=True)
+          raw = raw.drop_duplicates(subset=["operators", "seed"], keep="last")
+          raw = raw.sort_values(["operators", "seed"])
+          raw.to_csv(out / "test_2_operator_availability_raw.csv", index=False, encoding="utf-8-sig")
+
+          metric_cols = [
+              col for col in raw.columns
+              if col not in {"test", "operators", "seed"}
+              and pd.api.types.is_numeric_dtype(raw[col])
+          ]
+          summary = raw.groupby("operators", as_index=False)[metric_cols].mean()
+          seed_counts = raw.groupby("operators")["seed"].nunique().reindex(summary["operators"]).values
+          summary.insert(1, "n_seeds", seed_counts)
+          summary = summary.rename(columns={col: f"mean_{col}" for col in metric_cols})
+          summary.to_csv(out / "test_2_operator_availability_summary.csv", index=False, encoding="utf-8-sig")
+
+          completed_runs = len(raw)
+          completed_levels = int((summary["n_seeds"] >= 3).sum())
+          print(f"Merged completed seed-runs: {completed_runs}/39")
+          print(f"Operator levels with 3 seeds: {completed_levels}/13")
+          print(summary[["operators", "n_seeds"]].to_string(index=False))
+          PY
+
+      - name: Upload resumed Test 2 results
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-july-test-2-operator-availability-resumed
+          path: final_july_operator_resume/
