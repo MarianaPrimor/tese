@@ -5018,6 +5018,16 @@ def render_configuration_plan():
         try:
             with st.spinner("Loading data and running the genetic algorithm..."):
                 planning_month = get_planning_month(instance)
+                print("\n[DASHBOARD] GA STARTED", flush=True)
+                print(
+                    "[DASHBOARD] "
+                    f"population={POPULATION_SIZE}, "
+                    f"mutation={MUTATION_RATE}, "
+                    f"stagnation={STAGNATION_K}, "
+                    f"seed={RANDOM_SEED}, "
+                    f"edd_ratio={EDD_HEURISTIC_RATIO}",
+                    flush=True,
+                )
                 best_solution, best_metrics, actual_generations = run_genetic_algorithm(
                     instance,
                     population_size=POPULATION_SIZE,
@@ -5028,6 +5038,13 @@ def render_configuration_plan():
                     stagnation_k=STAGNATION_K,
                     seed=RANDOM_SEED,
                     heuristic_ratio=EDD_HEURISTIC_RATIO,
+                    verbose=True,
+                )
+                print(
+                    "[DASHBOARD] GA FINISHED | "
+                    f"generations={actual_generations} | "
+                    f"final_fitness={best_metrics.get('normalised_fitness', 0):.6f}",
+                    flush=True,
                 )
     
             st.session_state["ga_solution"] = deepcopy(best_solution)
