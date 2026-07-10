@@ -403,11 +403,12 @@ def run_test_1(base_instance):
     return rows, summarise(rows, ["demand_factor"])
 
 
-def run_test_2(base_instance, operator_counts=None):
+def run_test_2(base_instance, operator_counts=None, seeds=None):
     rows = []
     counts = operator_counts if operator_counts is not None else OPERATOR_COUNTS
+    seed_values = seeds if seeds is not None else SEEDS
     for operators in counts:
-        for seed in SEEDS:
+        for seed in seed_values:
             instance = set_uniform_operators(base_instance, operators)
             _solution, metrics = run_ga_case(instance, seed)
             row = {
@@ -1206,6 +1207,11 @@ def parse_args():
         default=None,
         help="For Test 2 only: comma-separated operator counts to run, e.g. 24,25,26.",
     )
+    parser.add_argument(
+        "--seeds",
+        default=None,
+        help="Comma-separated seeds to run, e.g. 42,43,44. Defaults to the standard seeds.",
+    )
     return parser.parse_args()
 
 
@@ -1232,7 +1238,18 @@ def main():
                 for value in args.operator_counts.split(",")
                 if value.strip()
             ]
-        raw, summary = run_test_2(base_instance, operator_counts=operator_counts)
+        seeds = None
+        if args.seeds:
+            seeds = [
+                int(value.strip())
+                for value in args.seeds.split(",")
+                if value.strip()
+            ]
+        raw, summary = run_test_2(
+            base_instance,
+            operator_counts=operator_counts,
+            seeds=seeds,
+        )
         write_csv(output_dir / "test_2_operator_availability_raw.csv", raw)
         write_csv(output_dir / "test_2_operator_availability_summary.csv", summary)
 

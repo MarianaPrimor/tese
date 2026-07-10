@@ -1,0 +1,117 @@
+name: Final July Operator Test Parallel
+
+on:
+  workflow_dispatch:
+
+jobs:
+  operator-seed-run:
+    name: "Operators ${{ matrix.operators }} seed ${{ matrix.seed }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        operators: [18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+        seed: [42, 43, 44]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run one operator-seed case
+        run: >
+          python src/final_july_tests.py
+          --test 2
+          --operator-counts "${{ matrix.operators }}"
+          --seeds "${{ matrix.seed }}"
+          --instance-file Inputs_July.xlsx
+          --output-dir operator_${{ matrix.operators }}_seed_${{ matrix.seed }}
+
+      - name: Upload operator-seed result
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-july-test-2-operator-${{ matrix.operators }}-seed-${{ matrix.seed }}
+          path: |
+            operator_${{ matrix.operators }}_seed_${{ matrix.seed }}/test_2_operator_availability_raw.csv
+            operator_${{ matrix.operators }}_seed_${{ matrix.seed }}/test_2_operator_availability_summary.csv
+
+  collect-operator-results:
+    name: "Collect operator results and generate figures"
+    needs: operator-seed-run
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install plotting dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download all operator artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: operator_artifacts
+
+      - name: Merge operator CSVs
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+
+          out = Path("final_july_operator_parallel")
+          out.mkdir(parents=True, exist_ok=True)
+          raw_files = sorted(Path("operator_artifacts").glob("**/test_2_operator_availability_raw.csv"))
+          if not raw_files:
+              raise SystemExit("No operator raw CSV files found.")
+
+          raw = pd.concat((pd.read_csv(path) for path in raw_files), ignore_index=True)
+          raw = raw.drop_duplicates(subset=["operators", "seed"], keep="last")
+          raw = raw.sort_values(["operators", "seed"])
+          raw.to_csv(out / "test_2_operator_availability_raw.csv", index=False, encoding="utf-8-sig")
+
+          metric_cols = [
+              col for col in raw.columns
+              if col not in {"test", "operators", "seed"}
+              and pd.api.types.is_numeric_dtype(raw[col])
+          ]
+          summary = raw.groupby("operators", as_index=False)[metric_cols].mean()
+          seed_counts = raw.groupby("operators")["seed"].nunique().reindex(summary["operators"]).values
+          summary.insert(1, "n_seeds", seed_counts)
+          summary = summary.rename(columns={col: f"mean_{col}" for col in metric_cols})
+          summary.to_csv(out / "test_2_operator_availability_summary.csv", index=False, encoding="utf-8-sig")
+
+          print(f"Merged operator seed-runs: {len(raw)}/39")
+          print(f"Operator levels completed: {int((summary['n_seeds'] >= 3).sum())}/13")
+          print(summary[["operators", "n_seeds"]].to_string(index=False))
+          PY
+
+      - name: Generate Test 2 figures
+        run: >
+          python src/final_july_tests.py
+          --plots-only
+          --output-dir final_july_operator_parallel
+
+      - name: List generated figures
+        run: |
+          echo "Generated figures:"
+          find final_july_operator_parallel/plots -type f -name "*.png" -print | sort
+
+      - name: Upload combined operator package
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-july-test-2-operator-parallel-results
+          path: final_july_operator_parallel/
