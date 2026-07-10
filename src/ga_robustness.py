@@ -391,11 +391,11 @@ def parse_args():
                         default=repo_dir / "outputs" / "ga_robustness")
     parser.add_argument("--seed", type=int, default=45)
     parser.add_argument("--collect-only", action="store_true")
-    parser.add_argument("--population-size", type=int, default=108)
-    parser.add_argument("--mutation-rate", type=float, default=0.057)
-    parser.add_argument("--stagnation-k", type=int, default=26)
+    parser.add_argument("--population-size", type=int, default=218)
+    parser.add_argument("--mutation-rate", type=float, default=0.144636088)
+    parser.add_argument("--stagnation-k", type=int, default=52)
     parser.add_argument("--generations", type=int, default=200)
-    parser.add_argument("--elite-size", type=int, default=5)
+    parser.add_argument("--elite-size", type=int, default=None)
     parser.add_argument("--tournament-size", type=int, default=3)
     parser.add_argument("--heuristic-ratio", type=float, default=0.15)
     parser.add_argument(
@@ -417,3 +417,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

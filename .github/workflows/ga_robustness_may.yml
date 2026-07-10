@@ -31,9 +31,9 @@ jobs:
           --input Inputs_May.xlsx
           --output-dir may_robustness_seed_outputs
           --seed ${{ matrix.seed }}
-          --population-size 108
-          --mutation-rate 0.057
-          --stagnation-k 26
+          --population-size 218
+          --mutation-rate 0.144636088
+          --stagnation-k 52
           --generations 200
           --elite-size 5
           --tournament-size 3
