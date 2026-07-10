@@ -11,13 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        seed: [
-          1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
-          11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-          21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-          31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-          41, 42, 43, 44, 45, 46, 47, 48, 49, 50
-        ]
+        seed: [45, 46, 47, 48, 49, 50, 51, 52, 53, 54]
 
     steps:
       - name: Checkout repository
@@ -37,11 +31,10 @@ jobs:
           --input Inputs_June.xlsx
           --output-dir ga_robustness_seed_outputs
           --seed ${{ matrix.seed }}
-          --population-size 108
-          --mutation-rate 0.057
-          --stagnation-k 26
+          --population-size 218
+          --mutation-rate 0.144636088
+          --stagnation-k 52
           --generations 200
-          --elite-size 5
           --tournament-size 3
           --heuristic-ratio 0.15
           --operators 20
@@ -92,3 +85,4 @@ jobs:
         with:
           name: ga-robustness-june-results
           path: ga_robustness_final/
+
