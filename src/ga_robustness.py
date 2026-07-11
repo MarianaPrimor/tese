@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import csv
 import math
 from pathlib import Path
@@ -62,6 +62,8 @@ def metric_row(seed, metrics, generations, instance):
     )
     capacity_l1_pct = line_capacity_utilisation_pct(metrics, instance, "L1")
     capacity_l2_pct = line_capacity_utilisation_pct(metrics, instance, "L2")
+    time_l1_min = line_total_time_min(metrics, 'L1')
+    time_l2_min = line_total_time_min(metrics, 'L2')
 
     return {
         "seed": seed,
@@ -72,6 +74,10 @@ def metric_row(seed, metrics, generations, instance):
         "scheduled_economic_value": metrics.get("scheduled_economic_value", 0),
         "postponed_economic_value": metrics.get("postponed_economic_value", 0),
         "setup_total_min": metrics.get("setup_total_min", 0),
+        'time_L1_min': time_l1_min,
+        'time_L1_hr': time_l1_min / 60,
+        'time_L2_min': time_l2_min,
+        'time_L2_hr': time_l2_min / 60,
         "capacity_utilisation_pct": (
             metrics.get("capacity_utilisation_ratio", 0) * 100
         ),
@@ -95,6 +101,26 @@ def metric_row(seed, metrics, generations, instance):
         "infeasible_solution": metrics.get("infeasible_solution", False),
     }
 
+
+def line_total_time_min(metrics, line):
+    production_by_day_line = metrics.get('production_time_by_day_line', {})
+    setup_by_day_line = metrics.get('setup_time_by_day_line', {})
+    days = {
+        day
+        for day, current_line in production_by_day_line.keys()
+        if current_line == line
+    }
+    days.update({
+        day
+        for day, current_line in setup_by_day_line.keys()
+        if current_line == line
+    })
+
+    return sum(
+        production_by_day_line.get((day, line), 0)
+        + setup_by_day_line.get((day, line), 0)
+        for day in days
+    )
 
 def line_capacity_utilisation_pct(metrics, instance, line):
     production_by_day_line = metrics.get("production_time_by_day_line", {})
@@ -144,6 +170,30 @@ def sanity_row(row, total_kg, total_value):
             and row["total_operator_excess"] <= tolerance
         ),
     }
+
+
+
+def comparison_export_df(raw_df):
+    columns = {
+        'seed': 'seed',
+        'Z': 'Z',
+        'planned_euros': 'scheduled_economic_value',
+        'planned_kg': 'scheduled_kg',
+        'postponed_boxes': 'postponed_boxes',
+        'postponed_orders': 'postponed_orders',
+        'total_setup_time_min': 'setup_total_min',
+        'time_L1_min': 'time_L1_min',
+        'time_L1_hr': 'time_L1_hr',
+        'time_L2_min': 'time_L2_min',
+        'time_L2_hr': 'time_L2_hr',
+        'capacity_L1_pct': 'capacity_utilisation_L1_pct',
+        'capacity_L2_pct': 'capacity_utilisation_L2_pct',
+        'operator_usage_pct': 'operator_utilisation_pct',
+        'delay_days': 'delay_days_total',
+    }
+    selected = [source for source in columns.values()]
+    renamed = {source: target for target, source in columns.items()}
+    return raw_df[selected].rename(columns=renamed)
 
 
 def summary_rows(raw_df):
@@ -318,6 +368,13 @@ def collect_results(args):
     ).drop_duplicates(subset=["seed", "generation"], keep="last")
     convergence_df = convergence_df.sort_values(["seed", "generation"])
 
+    comparison_df = comparison_export_df(raw_df)
+    comparison_df.to_csv(
+        args.output_dir / 'ga_robustness_comparison_metrics.csv',
+        index=False,
+        encoding='utf-8-sig',
+    )
+
     raw_df.to_csv(
         args.output_dir / "ga_robustness_raw_results.csv",
         index=False,
@@ -357,6 +414,7 @@ def collect_results(args):
     try:
         with pd.ExcelWriter(args.output_dir / "ga_robustness_results.xlsx") as writer:
             raw_df.to_excel(writer, sheet_name="raw_runs", index=False)
+            comparison_df.to_excel(writer, sheet_name='comparison_metrics', index=False)
             summary.to_excel(writer, sheet_name="summary", index=False)
             sanity.to_excel(writer, sheet_name="sanity_checks", index=False)
             convergence_df.to_excel(
@@ -417,4 +475,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
 
