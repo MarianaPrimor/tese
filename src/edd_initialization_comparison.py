@@ -18,12 +18,12 @@ DEFAULT_INSTANCE_FILE = PROJECT_DIR / "Inputs_July.xlsx"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "outputs" / "edd_initialization_comparison"
 
 GA_PARAMETERS = {
-    "population_size": 108,
+    "population_size": 218,
     "generations": 200,
-    "mutation_rate": 0.057,
-    "elite_size": 5,
+    "mutation_rate": 0.144636088,
+    "elite_size": None,
     "tournament_size": 3,
-    "stagnation_k": 26,
+    "stagnation_k": 52,
 }
 SEEDS = [42, 43, 44]
 CONFIGURATIONS = (
