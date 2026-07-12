@@ -6,7 +6,11 @@ from pathlib import Path
 from evaluator import (
     compute_max_values,
     create_refs_by_id,
+    get_available_line_time_for_day,
+    get_capacity_tolerance_for_day,
     get_order_economic_value,
+    get_production_time,
+    get_setup,
     get_valid_days_for_ref,
     normalised_fitness_breakdown,
     valid_lines_for_ref,
@@ -46,6 +50,8 @@ def build_edd_baseline_solution(instance):
 
     decorated_orders.sort()
     solution = []
+    occupied_time = {}
+    last_family = {}
 
     for _, _, order_index, order, ref, ref_id in decorated_orders:
         valid_lines = valid_lines_for_ref(ref) if ref else []
@@ -58,9 +64,51 @@ def build_edd_baseline_solution(instance):
                 for day in valid_days
                 if delivery_day is None or day <= delivery_day
             ]
-            day = min(on_time_days or valid_days)
-            line = valid_lines[0]
-            postponed = False
+            candidate_days = sorted(on_time_days) + [
+                day for day in sorted(valid_days) if day not in set(on_time_days)
+            ]
+            selected_day = None
+            selected_line = None
+
+            for day in candidate_days:
+                for line in valid_lines:
+                    production_time = get_production_time(
+                        ref,
+                        line,
+                        order["master_boxes"],
+                    )
+
+                    if production_time is None:
+                        continue
+
+                    key = (day, line)
+                    setup_time = get_setup(
+                        instance,
+                        last_family.get(key),
+                        ref["family"],
+                    )
+                    capacity_limit = (
+                        get_available_line_time_for_day(instance, day)
+                        + get_capacity_tolerance_for_day(instance, day)
+                    )
+
+                    if occupied_time.get(key, 0) + setup_time + production_time <= capacity_limit:
+                        selected_day = day
+                        selected_line = line
+                        occupied_time[key] = (
+                            occupied_time.get(key, 0)
+                            + setup_time
+                            + production_time
+                        )
+                        last_family[key] = ref["family"]
+                        break
+
+                if selected_day is not None:
+                    break
+
+            day = selected_day
+            line = selected_line
+            postponed = selected_day is None
         else:
             day = None
             line = None
