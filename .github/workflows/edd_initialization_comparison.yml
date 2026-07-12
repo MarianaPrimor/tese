@@ -28,7 +28,7 @@ jobs:
           0.45, 0.46, 0.47, 0.48, 0.49,
           0.50
         ]
-        seed: [42]
+        seed: [42, 43, 44]
 
     steps:
       - name: Checkout repository
