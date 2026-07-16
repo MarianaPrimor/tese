@@ -4558,10 +4558,11 @@ st.markdown(
         padding: 14px 16px !important;
         font-weight: 600 !important;
     }
-    [data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+    [data-testid="stTabs"] button[role="tab"][aria-selected="true"],
+    [data-testid="stTabs"] [role="tab"][aria-selected="true"] {
         background-color: #ffffff !important;
-        color: #153e7e !important;
-        border-bottom-color: #153e7e !important;
+        color: #172033 !important;
+        border-bottom-color: #b6003b !important;
     }
     [data-testid="stTabs"] button[role="tab"]:hover {
         background-color: #f7f9fc !important;
@@ -4722,8 +4723,7 @@ st.markdown(
     button[kind="secondary"],
     button[data-testid="stBaseButton-primary"],
     button[data-testid="stBaseButton-secondary"],
-    div[data-testid="stButton"] button,
-    div[data-testid="stFileUploader"] button {
+    div[data-testid="stButton"] button {
         background: #153e7e !important;
         background-color: #153e7e !important;
         color: #ffffff !important;
@@ -4735,8 +4735,7 @@ st.markdown(
     button[kind="secondary"] *,
     button[data-testid="stBaseButton-primary"] *,
     button[data-testid="stBaseButton-secondary"] *,
-    div[data-testid="stButton"] button *,
-    div[data-testid="stFileUploader"] button * {
+    div[data-testid="stButton"] button * {
         color: #ffffff !important;
     }
     .stButton button:hover,
@@ -4744,12 +4743,23 @@ st.markdown(
     button[kind="secondary"]:hover,
     button[data-testid="stBaseButton-primary"]:hover,
     button[data-testid="stBaseButton-secondary"]:hover,
-    div[data-testid="stButton"] button:hover,
-    div[data-testid="stFileUploader"] button:hover {
+    div[data-testid="stButton"] button:hover {
         background: #b6003b !important;
         background-color: #b6003b !important;
         color: #ffffff !important;
         border-color: #b6003b !important;
+    }
+    div[data-testid="stFileUploader"] button,
+    div[data-testid="stFileUploader"] button:hover {
+        background: #ffffff !important;
+        background-color: #ffffff !important;
+        color: #153e7e !important;
+        border: 1px solid #cfd9e6 !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="stFileUploader"] button *,
+    div[data-testid="stFileUploader"] button:hover * {
+        color: #153e7e !important;
     }
     /* Light Kaizen readability fixes */
     .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"], .main {
@@ -4778,13 +4788,13 @@ st.markdown(
     }
     div[data-testid="stFileUploader"] {
         background-color: #ffffff !important;
-        border: 2px dashed #153e7e !important;
+        border: 1px dashed #b8c7d9 !important;
         border-radius: 10px !important;
         padding: 20px 22px !important;
-        box-shadow: 0 8px 22px rgba(21, 62, 126, 0.10) !important;
+        box-shadow: 0 4px 14px rgba(23, 32, 51, 0.06) !important;
     }
     div[data-testid="stFileUploader"] section {
-        background-color: #f7f9fc !important;
+        background-color: #ffffff !important;
         border: 0 !important;
         border-radius: 8px !important;
         min-height: 128px !important;
