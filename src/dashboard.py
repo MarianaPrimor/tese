@@ -2738,7 +2738,7 @@ def render_demand_experiment(instance, baseline_solution, baseline_metrics):
         for _, row in edited_df[edited_df["Incluir"]].iterrows():
             order_index = int(row["Order"])
             order = deepcopy(instance.get("demand", [])[order_index])
-            order["master_boxes"] = int(max(0, row.get("Caixas", 0) or 0))
+            order["master_boxes"] = int(max(0, row.get("Boxes", 0) or 0))
             selected_demand.append(order)
 
         scenario_instance = make_scenario_instance(instance, demand=selected_demand)
@@ -3150,7 +3150,7 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         for _, row in edited_demand_df[edited_demand_df["Incluir"]].iterrows():
             order_index = int(row["Order"])
             order = deepcopy(instance.get("demand", [])[order_index])
-            order["master_boxes"] = int(max(0, row.get("Caixas", 0) or 0))
+            order["master_boxes"] = int(max(0, row.get("Boxes", 0) or 0))
             original_to_scenario_order_id[order_index] = len(selected_demand)
             selected_demand.append(order)
 
