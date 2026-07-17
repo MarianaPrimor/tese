@@ -91,7 +91,7 @@ def validate_input_workbook(uploaded_excel):
             data_only=True,
         )
     except Exception as exc:
-        return [f"The file is not a valid Excel file: {exc}"]
+        return [f"O ficheiro não é um Excel válido: {exc}"]
     finally:
         try:
             uploaded_excel.seek(0)
@@ -217,7 +217,7 @@ def validate_input_workbook(uploaded_excel):
             invalid_rows.append(row_number)
 
     if demand_rows == 0:
-        errors.append("The 5_PROCURA sheet contains no demand rows.")
+        errors.append("A folha 5_PROCURA não contém linhas de procura.")
 
     if invalid_rows:
         errors.append(
@@ -470,7 +470,7 @@ def order_label(instance, order_id):
     delivery = order.get("delivery_calendar_date") or order.get("delivery_date", "")
     delivery_text = format_date(delivery) if hasattr(delivery, "strftime") else delivery
 
-    return f"{order_id} | {ref_id} | {boxes:g} boxes | entrega {delivery_text}"
+    return f"{order_id} | {ref_id} | {boxes:g} caixas | entrega {delivery_text}"
 
 
 def build_manual_constraint_editor_df(instance):
@@ -484,7 +484,7 @@ def build_manual_constraint_editor_df(instance):
             "Reference": str(order.get("ref_id", "")).strip(),
             "Boxes": order.get("master_boxes", 0),
             "Day fixo": None,
-            "Fixed line": "Automatic",
+            "Fixed line": "Automático",
         })
 
     return pd.DataFrame(rows)
@@ -552,11 +552,11 @@ def build_manual_locked_orders(instance, edited_df):
         fixed_date = normalize_calendar_date(fixed_date)
 
         if fixed_date is None:
-            warnings.append(f"Order {order_id}: escolha um dia fixo.")
+            warnings.append(f"Pedido {order_id}: escolha um dia fixo.")
             continue
 
         if fixed_date not in working_day_index_by_date:
-            warnings.append(f"Order {order_id}: the day selected is not a working day.")
+            warnings.append(f"Pedido {order_id}: o dia selecionado não é um dia útil.")
             continue
 
         fixed_day = working_day_index_by_date[fixed_date]
@@ -565,14 +565,14 @@ def build_manual_locked_orders(instance, edited_df):
         ref = refs_by_id.get(ref_id)
 
         if ref is None:
-            warnings.append(f"Order {order_id}: reference {ref_id} not found.")
+            warnings.append(f"Pedido {order_id}: referência {ref_id} não encontrada.")
             continue
 
         valid_days = get_valid_days_for_ref(instance, ref)
 
         if fixed_day not in valid_days:
             warnings.append(
-                f"Order {order_id}: a reference {ref_id} cannot be scheduled on that day."
+                f"Pedido {order_id}: a referência {ref_id} não pode ser produzida nesse dia."
             )
             continue
 
@@ -580,13 +580,13 @@ def build_manual_locked_orders(instance, edited_df):
         selected_line = row.get("Fixed line")
         fixed_line = (
             valid_lines[0]
-            if selected_line in (None, "", "Automatic") and valid_lines
+            if selected_line in (None, "", "Automatic", "Automático", "Automático") and valid_lines
             else selected_line
         )
 
         if fixed_line not in valid_lines:
             warnings.append(
-                f"Order {order_id}: the line {fixed_line} is not compatible com {ref_id}."
+                f"Pedido {order_id}: a linha {fixed_line} não é compatível com {ref_id}."
             )
             continue
 
@@ -826,14 +826,14 @@ def build_postponed_orders_df(plan_df):
         "Master boxes": "Quantity",
         "Kg": "Kg",
         "Economic value": "Economic value",
-        "Delivery date": "Delivery date",
+        "Delivery date": "Data de entrega",
         "Delivery day": "Day de entrega",
     })[[
         "Product",
         "Quantity",
         "Kg",
         "Economic value",
-        "Delivery date",
+        "Data de entrega",
         "Day de entrega",
     ]]
 
@@ -841,18 +841,17 @@ def build_postponed_orders_df(plan_df):
 
 def build_daily_sequence_export_df(instance, plan_df):
     columns = [
-        "Production date",
-        "Day",
-        "Line",
-        "Sequence",
-        "Product",
-        "Name",
-        "Quantity",
+        "Data de produção",
+        "Dia",
+        "Linha",
+        "Sequência",
+        "Produto",
+        "Quantidade",
         "Setup (min)",
-        "Production time (min)",
+        "Tempo de produção (min)",
         "Kg",
-        "Economic value",
-        "Delivery date",
+        "Valor económico",
+        "Data de entrega",
     ]
     scheduled_df = plan_df[
         (plan_df["Status"] == "Scheduled")
@@ -866,17 +865,16 @@ def build_daily_sequence_export_df(instance, plan_df):
         scheduled_df
         .sort_values(["Day", "Line", "Seq."])
         .rename(columns={
-            "Production date": "Production date",
-            "Day": "Day",
-            "Line": "Line",
-            "Seq.": "Sequence",
-            "Reference": "Product",
-            "Reference name": "Name",
-            "Master boxes": "Quantity",
+            "Production date": "Data de produção",
+            "Day": "Dia",
+            "Line": "Linha",
+            "Seq.": "Sequência",
+            "Reference": "Produto",
+            "Master boxes": "Quantidade",
             "Setup time (min)": "Setup (min)",
-            "Production time (min)": "Production time (min)",
-            "Economic value": "Economic value",
-            "Delivery date": "Delivery date",
+            "Production time (min)": "Tempo de produção (min)",
+            "Economic value": "Valor económico",
+            "Delivery date": "Data de entrega",
         })
     )
 
@@ -888,7 +886,7 @@ def build_capacity_export_df(instance, metrics):
         "Production date",
         "Day",
         "Line",
-        "Shifts",
+        "Turnos",
         "Production time (min)",
         "Tempo de setup (min)",
         "Tempo ocupado (min)",
@@ -905,7 +903,7 @@ def build_capacity_export_df(instance, metrics):
         "Production date": "Production date",
         "Day": "Day",
         "Line": "Line",
-        "Shifts": "Shifts",
+        "Shifts": "Turnos",
         "Production time (min)": "Production time (min)",
         "Setup time (min)": "Tempo de setup (min)",
         "Occupied time (min)": "Tempo ocupado (min)",
@@ -929,22 +927,22 @@ def build_scenario_metrics_export_df(
     metric_rows = [
         ("Fitness normalizada", metrics.get("normalised_fitness", 0)),
         ("Cumprimento por caixas (%)", box_fulfilment_rate),
-        ("Scheduled boxes", scheduled_boxes),
-        ("Postponed boxes", postponed_boxes),
-        ("Kg scheduled", metrics.get("scheduled_kg", 0)),
-        ("Postponed kg", metrics.get("postponed_kg", 0)),
-        ("Economic value scheduled", metrics.get("scheduled_economic_value", 0)),
-        ("Economic value adiado", metrics.get("postponed_economic_value", 0)),
+        ("Caixas planeadas", scheduled_boxes),
+        ("Caixas adiadas", postponed_boxes),
+        ("Kg planeados", metrics.get("scheduled_kg", 0)),
+        ("Kg adiados", metrics.get("postponed_kg", 0)),
+        ("Valor económico planeado", metrics.get("scheduled_economic_value", 0)),
+        ("Valor económico adiado", metrics.get("postponed_economic_value", 0)),
         ("Tempo total de setup (min)", metrics.get("setup_total_min", 0)),
-        ("L1 utilisation (%)", capacity_utilization_by_line.get("L1", 0)),
-        ("L2 utilisation (%)", capacity_utilization_by_line.get("L2", 0)),
-        ("Utilisation de operators (%)", operator_occupancy_pct),
-        ("Operator-minutes", metrics.get("operator_usage_minutes", 0)),
-        ("Postponed orders", metrics.get("postponed_orders", 0)),
-        ("Days de atraso", metrics.get("delay_days_total", 0)),
+        ("Utilização L1 (%)", capacity_utilization_by_line.get("L1", 0)),
+        ("Utilização L2 (%)", capacity_utilization_by_line.get("L2", 0)),
+        ("Utilização de operadores (%)", operator_occupancy_pct),
+        ("Operador-minutos", metrics.get("operator_usage_minutes", 0)),
+        ("Pedidos adiados", metrics.get("postponed_orders", 0)),
+        ("Dias de atraso", metrics.get("delay_days_total", 0)),
     ]
 
-    return pd.DataFrame(metric_rows, columns=["Metric", "Valor"])
+    return pd.DataFrame(metric_rows, columns=["Métrica", "Valor"])
 
 
 def build_scenario_excel_export(
@@ -957,8 +955,8 @@ def build_scenario_excel_export(
     output = BytesIO()
 
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        plan_df.to_excel(writer, index=False, sheet_name="Planthe dayrio")
-        postponed_df.to_excel(writer, index=False, sheet_name="Postponed orders")
+        plan_df.to_excel(writer, index=False, sheet_name="Plano diario")
+        postponed_df.to_excel(writer, index=False, sheet_name="Pedidos adiados")
         capacity_df.to_excel(writer, index=False, sheet_name="Capacidade linha")
         metrics_df.to_excel(writer, index=False, sheet_name="Metricas")
 
@@ -969,7 +967,7 @@ def build_scenario_excel_export(
     return output.getvalue()
 def render_simple_daily_plan_table(simple_plan_df, key, height=520):
     if simple_plan_df.empty:
-        st.info("No scheduled orders.")
+        st.info("Não existem pedidos planeados.")
         return
 
     display_df = simple_plan_df.drop(columns=["_tipo", "_estado"])
@@ -1089,7 +1087,7 @@ def compute_operator_occupancy_pct(instance, metrics):
     return total_peak_operators / total_available_operators * 100
 def render_daily_plan_calendar(instance, simple_plan_df, metrics=None):
     if simple_plan_df.empty:
-        st.info("No scheduled orders to display in the calendar.")
+        st.info("Não existem pedidos planeados para mostrar no calendário.")
         return
 
     summaries = build_calendar_day_summary(instance, simple_plan_df, metrics)
@@ -1290,7 +1288,7 @@ def render_daily_plan_calendar(instance, simple_plan_df, metrics=None):
 
 def render_postponed_orders_table(postponed_df, key, height=260):
     if postponed_df.empty:
-        st.info("No postponed orders.")
+        st.info("Não existem pedidos adiados.")
         return
 
     styled_df = postponed_df.style.format({
@@ -1360,7 +1358,7 @@ def build_solution_from_scenario(instance, base_solution, edited_df):
         gene = genes_by_order_id.get(order_id)
 
         if gene is None:
-            errors.append(f"Line {row_index + 1}: order {order_id} not found.")
+            errors.append(f"Linha {row_index + 1}: pedido {order_id} não encontrado.")
             continue
 
         ref_id = str(gene.get("ref_id", "")).strip()
@@ -1368,7 +1366,7 @@ def build_solution_from_scenario(instance, base_solution, edited_df):
 
         if ref is None:
             errors.append(
-                f"Order {order_id}: reference {ref_id} not found."
+                f"Pedido {order_id}: referência {ref_id} não encontrada."
             )
             continue
 
@@ -1394,7 +1392,7 @@ def build_solution_from_scenario(instance, base_solution, edited_df):
             day_value = row.get("Day")
 
             if pd.isna(day_value):
-                errors.append(f"Order {order_id}: choose a production day.")
+                errors.append(f"Pedido {order_id}: escolha um dia de produção.")
                 continue
 
             day = int(day_value)
@@ -1403,13 +1401,13 @@ def build_solution_from_scenario(instance, base_solution, edited_df):
 
             if day not in valid_days:
                 errors.append(
-                    f"Order {order_id} ({ref_id}): the day {day} is not allowed."
+                    f"Pedido {order_id} ({ref_id}): o dia {day} não é permitido."
                 )
                 continue
 
             if not valid_lines:
                 errors.append(
-                    f"Order {order_id} ({ref_id}): there is no valid line."
+                    f"Pedido {order_id} ({ref_id}): não existe linha válida."
                 )
                 continue
 
@@ -1427,43 +1425,43 @@ def build_solution_from_scenario(instance, base_solution, edited_df):
 def build_scenario_comparison_df(ga_metrics, manual_metrics):
     comparison_rows = [
         (
-            "Normalised fitness",
+            "Fitness normalizada",
             ga_metrics.get("normalised_fitness", 0),
             manual_metrics.get("normalised_fitness", 0),
             "min",
         ),
         (
-            "Excesso de capacity (min)",
+            "Excesso de capacidade (min)",
             ga_metrics.get("total_capacity_excess", 0),
             manual_metrics.get("total_capacity_excess", 0),
             "min",
         ),
         (
-            "Setup time (min)",
+            "Tempo de setup (min)",
             ga_metrics.get("setup_total_min", 0),
             manual_metrics.get("setup_total_min", 0),
             "min",
         ),
         (
-            "Days de atraso",
+            "Dias de atraso",
             ga_metrics.get("delay_days_total", 0),
             manual_metrics.get("delay_days_total", 0),
             "min",
         ),
         (
-            "Postponed orders",
+            "Pedidos adiados",
             ga_metrics.get("postponed_orders", 0),
             manual_metrics.get("postponed_orders", 0),
             "min",
         ),
         (
-            "Utilisation dos operators (operator-min)",
+            "Utilização de operadores (op-min)",
             ga_metrics.get("operator_usage_minutes", 0),
             manual_metrics.get("operator_usage_minutes", 0),
             "max",
         ),
         (
-            "Economic value scheduled",
+            "Valor económico planeado",
             ga_metrics.get("scheduled_economic_value", 0),
             manual_metrics.get("scheduled_economic_value", 0),
             "max",
@@ -1476,7 +1474,7 @@ def build_scenario_comparison_df(ga_metrics, manual_metrics):
         improved = difference < 0 if direction == "min" else difference > 0
 
         if abs(difference) < 1e-9:
-            result = "No change"
+            result = "Sem alteração"
         elif improved:
             result = "Melhor"
         else:
@@ -1484,10 +1482,10 @@ def build_scenario_comparison_df(ga_metrics, manual_metrics):
 
         rows.append({
             "Indicador": indicator,
-            "GA solution": round(ga_value, 2),
-            "Manual scenario": round(manual_value, 2),
-            "Difference": round(difference, 2),
-            "Result": result,
+            "Plano GA": round(ga_value, 2),
+            "Cenário manual": round(manual_value, 2),
+            "Diferença": round(difference, 2),
+            "Resultado": result,
         })
 
     return pd.DataFrame(rows)
@@ -1542,9 +1540,9 @@ def build_what_if_comparison_df(
     scenario_instance=None,
 ):
     metric_rows = [
-        ("Postponed orders", "postponed_orders", "min"),
-        ("Postponed boxes", "postponed_boxes", "min"),
-        ("Scheduled value", "scheduled_economic_value", "max"),
+        ("Pedidos adiados", "postponed_orders", "min"),
+        ("Caixas adiadas", "postponed_boxes", "min"),
+        ("Valor planeado", "scheduled_economic_value", "max"),
     ]
     rows = []
 
@@ -1554,18 +1552,18 @@ def build_what_if_comparison_df(
         delta = scenario_value - baseline_value
 
         if abs(delta) < 1e-9:
-            result = "No change"
+            result = "Sem alteração"
         elif (direction == "min" and delta < 0) or (direction == "max" and delta > 0):
-            result = "Improved"
+            result = "Melhorou"
         else:
-            result = "Worsened"
+            result = "Piorou"
 
         rows.append({
-            "Metric": label,
+            "Métrica": label,
             "Baseline": round(baseline_value, 2),
-            "Scenario": round(scenario_value, 2),
-            "Delta": round(delta, 2),
-            "Result": result,
+            "Cenário": round(scenario_value, 2),
+            "Diferença": round(delta, 2),
+            "Resultado": result,
         })
 
     if baseline_instance is not None and scenario_instance is not None:
@@ -1580,18 +1578,18 @@ def build_what_if_comparison_df(
         delta = scenario_operator_pct - baseline_operator_pct
 
         if abs(delta) < 1e-9:
-            result = "No change"
+            result = "Sem alteração"
         elif delta > 0:
-            result = "Improved"
+            result = "Melhorou"
         else:
-            result = "Worsened"
+            result = "Piorou"
 
         rows.append({
-            "Metric": "Utilisation operators (%)",
+            "Métrica": "Utilização de operadores (%)",
             "Baseline": round(baseline_operator_pct, 2),
-            "Scenario": round(scenario_operator_pct, 2),
-            "Delta": round(delta, 2),
-            "Result": result,
+            "Cenário": round(scenario_operator_pct, 2),
+            "Diferença": round(delta, 2),
+            "Resultado": result,
         })
 
     return pd.DataFrame(rows)
@@ -1599,18 +1597,18 @@ def build_what_if_comparison_df(
 def build_baseline_scenario_bar_df(baseline_metrics, scenario_metrics):
     return pd.DataFrame([
         {
-            "Scenario": "Baseline",
-            "Postponed orders": baseline_metrics.get("postponed_orders", 0),
-            "Postponed boxes": baseline_metrics.get("postponed_boxes", 0),
-            "Scheduled value": baseline_metrics.get("scheduled_economic_value", 0),
-            "Operators used": baseline_metrics.get("operator_usage_minutes", 0),
+            "Cenário": "Base",
+            "Pedidos adiados": baseline_metrics.get("postponed_orders", 0),
+            "Caixas adiadas": baseline_metrics.get("postponed_boxes", 0),
+            "Valor planeado": baseline_metrics.get("scheduled_economic_value", 0),
+            "Operadores usados": baseline_metrics.get("operator_usage_minutes", 0),
         },
         {
-            "Scenario": "Scenario",
-            "Postponed orders": scenario_metrics.get("postponed_orders", 0),
-            "Postponed boxes": scenario_metrics.get("postponed_boxes", 0),
-            "Scheduled value": scenario_metrics.get("scheduled_economic_value", 0),
-            "Operators used": scenario_metrics.get("operator_usage_minutes", 0),
+            "Cenário": "Cenário",
+            "Pedidos adiados": scenario_metrics.get("postponed_orders", 0),
+            "Caixas adiadas": scenario_metrics.get("postponed_boxes", 0),
+            "Valor planeado": scenario_metrics.get("scheduled_economic_value", 0),
+            "Operadores usados": scenario_metrics.get("operator_usage_minutes", 0),
         },
     ])
 
@@ -1618,19 +1616,19 @@ def build_baseline_scenario_bar_df(baseline_metrics, scenario_metrics):
 def render_baseline_scenario_bar_chart(baseline_metrics, scenario_metrics, title):
     chart_df = build_baseline_scenario_bar_df(baseline_metrics, scenario_metrics)
     chart_long = chart_df.melt(
-        id_vars="Scenario",
-        var_name="Metric",
+        id_vars="Cenário",
+        var_name="Métrica",
         value_name="Valor",
     )
     fig = px.bar(
         chart_long,
-        x="Metric",
+        x="Métrica",
         y="Valor",
-        color="Scenario",
+        color="Cenário",
         barmode="group",
         color_discrete_map={
-            "Baseline": "#153e7e",
-            "Scenario": "#b6003b",
+            "Base": "#153e7e",
+            "Cenário": "#b6003b",
         },
         title=title,
     )
@@ -1638,19 +1636,19 @@ def render_baseline_scenario_bar_chart(baseline_metrics, scenario_metrics, title
 
 
 def style_what_if_delta(row):
-    result = row.get("Result")
+    result = row.get("Resultado")
     style = [""] * len(row)
 
-    if "Delta" not in row.index:
+    if "Diferença" not in row.index:
         return style
 
-    delta_index = list(row.index).index("Delta")
+    delta_index = list(row.index).index("Diferença")
 
-    if result == "Improved":
+    if result == "Melhorou":
         style[delta_index] = (
             f"background-color: {OK_BG}; color: {OK_TEXT}; font-weight: 700"
         )
-    elif result == "Worsened":
+    elif result == "Piorou":
         style[delta_index] = (
             f"background-color: {OVERLOAD_BG}; color: {OVERLOAD_TEXT}; font-weight: 700"
         )
@@ -1660,7 +1658,7 @@ def style_what_if_delta(row):
 
 def render_capacity_what_if_section(instance, baseline_solution, baseline_metrics):
     st.subheader("What-If de Capacidade")
-    st.caption("Edite a disponibilidade de operators por dia.")
+    st.caption("Edite a disponibilidade de operadores por dia.")
 
     default_capacity_df = build_capacity_what_if_df(instance)
     max_operator_option = max(
@@ -1670,10 +1668,11 @@ def render_capacity_what_if_section(instance, baseline_solution, baseline_metric
     edited_capacity_df = st.data_editor(
         default_capacity_df,
         column_config={
-            "Day": st.column_config.NumberColumn(format="%d"),
-            "Date": st.column_config.TextColumn(),
-            "Current operators": st.column_config.NumberColumn(format="%d"),
+            "Day": st.column_config.NumberColumn("Dia", format="%d"),
+            "Date": st.column_config.TextColumn("Data"),
+            "Current operators": st.column_config.NumberColumn("Operadores atuais", format="%d"),
             "Scenario operators": st.column_config.SelectboxColumn(
+                "Operadores do cenário",
                 options=list(range(0, max_operator_option + 1)),
                 required=True,
             ),
@@ -1685,10 +1684,10 @@ def render_capacity_what_if_section(instance, baseline_solution, baseline_metric
         key="capacity_what_if_editor",
     )
 
-    if st.button("Simulate scenario", type="primary", width="content"):
+    if st.button("Simular cenário", type="primary", width="content"):
         scenario_instance = apply_capacity_what_if(instance, edited_capacity_df)
 
-        with st.spinner("A correr o GA para o scenario What-If..."):
+        with st.spinner("A correr o GA para o cenário What-If..."):
             scenario_solution, scenario_metrics, _ = run_genetic_algorithm(
                 scenario_instance,
                 population_size=POPULATION_SIZE,
@@ -1715,7 +1714,7 @@ def render_capacity_what_if_section(instance, baseline_solution, baseline_metric
     scenario_metrics = st.session_state.get("capacity_what_if_metrics")
 
     if scenario_metrics is None:
-        st.info("Edit the table and click Simulate scenario to compare with the baseline.")
+        st.info("Edite a tabela e clique em Simular cenário para comparar com a base.")
         return
 
     comparison_df = build_what_if_comparison_df(
@@ -1723,7 +1722,7 @@ def render_capacity_what_if_section(instance, baseline_solution, baseline_metric
         scenario_metrics,
     )
 
-    st.markdown("**Baseline vs. Scenario**")
+    st.markdown("**Base vs. cenário**")
     st.dataframe(
         comparison_df.style.apply(style_what_if_delta, axis=1),
         width="stretch",
@@ -1733,7 +1732,7 @@ def render_capacity_what_if_section(instance, baseline_solution, baseline_metric
     render_baseline_scenario_bar_chart(
         baseline_metrics,
         scenario_metrics,
-        "Comparison Baseline vs. Scenario",
+        "Comparação entre base e cenário",
     )
 
 
@@ -1935,20 +1934,20 @@ def build_automatic_capacity_results(instance, baseline_metrics):
         rows.append({
             "Day": day,
             "Date": get_production_date(instance, day),
-            "Critical line": line,
-            "Additional operators": 1,
-            "Postponed orders": scenario_metrics.get("postponed_orders", 0),
-            "Postponed boxes": scenario_metrics.get("postponed_boxes", 0),
-            "Economic value produzido": scenario_metrics.get("scheduled_economic_value", 0),
-            "Economic gain": (
+            "Linha crítica": line,
+            "Operadores adicionais": 1,
+            "Pedidos adiados": scenario_metrics.get("postponed_orders", 0),
+            "Caixas adiadas": scenario_metrics.get("postponed_boxes", 0),
+            "Valor económico produzido": scenario_metrics.get("scheduled_economic_value", 0),
+            "Ganho económico": (
                 scenario_metrics.get("scheduled_economic_value", 0)
                 - baseline_value
             ),
-            "Reduction in postponed orders": (
+            "Redução de pedidos adiados": (
                 baseline_orders
                 - scenario_metrics.get("postponed_orders", 0)
             ),
-            "Reduction in postponed boxes": (
+            "Redução de caixas adiadas": (
                 baseline_boxes
                 - scenario_metrics.get("postponed_boxes", 0)
             ),
@@ -1956,18 +1955,18 @@ def build_automatic_capacity_results(instance, baseline_metrics):
 
     individual_df = pd.DataFrame(rows)
     ranked_days = individual_df.sort_values(
-        ["Economic gain", "Reduction in postponed boxes", "Reduction in postponed orders"],
+        ["Ganho económico", "Redução de caixas adiadas", "Redução de pedidos adiados"],
         ascending=False,
     )["Day"].tolist()
     cumulative_rows = [{
-        "Additional operators": 0,
-        "Reinforced days": "Baseline",
-        "Reinforced lines": "",
-        "Postponed orders": baseline_orders,
-        "Postponed boxes": baseline_boxes,
-        "Economic value produzido": baseline_value,
-        "Economic gain": 0,
-        "Reduction in postponed orders": 0,
+        "Operadores adicionais": 0,
+        "Dias reforçados": "Base",
+        "Linhas reforçadas": "",
+        "Pedidos adiados": baseline_orders,
+        "Caixas adiadas": baseline_boxes,
+        "Valor económico produzido": baseline_value,
+        "Ganho económico": 0,
+        "Redução de pedidos adiados": 0,
     }]
 
     for n_extra in range(1, min(5, len(ranked_days)) + 1):
@@ -1989,23 +1988,23 @@ def build_automatic_capacity_results(instance, baseline_metrics):
             str(
                 individual_df.loc[
                     individual_df["Day"] == day,
-                    "Critical line",
+                    "Linha crítica",
                 ].iloc[0]
             )
             for day in selected_days
         ]
         cumulative_rows.append({
-            "Additional operators": n_extra,
-            "Reinforced days": ", ".join(str(day) for day in selected_days),
-            "Reinforced lines": ", ".join(selected_lines),
-            "Postponed orders": scenario_metrics.get("postponed_orders", 0),
-            "Postponed boxes": scenario_metrics.get("postponed_boxes", 0),
-            "Economic value produzido": scenario_metrics.get("scheduled_economic_value", 0),
-            "Economic gain": (
+            "Operadores adicionais": n_extra,
+            "Dias reforçados": ", ".join(str(day) for day in selected_days),
+            "Linhas reforçadas": ", ".join(selected_lines),
+            "Pedidos adiados": scenario_metrics.get("postponed_orders", 0),
+            "Caixas adiadas": scenario_metrics.get("postponed_boxes", 0),
+            "Valor económico produzido": scenario_metrics.get("scheduled_economic_value", 0),
+            "Ganho económico": (
                 scenario_metrics.get("scheduled_economic_value", 0)
                 - baseline_value
             ),
-            "Reduction in postponed orders": (
+            "Redução de pedidos adiados": (
                 baseline_orders
                 - scenario_metrics.get("postponed_orders", 0)
             ),
@@ -2018,39 +2017,39 @@ def build_capacity_recommendation(cumulative_df):
     if cumulative_df.empty or len(cumulative_df) <= 1:
         return None
 
-    scenario_df = cumulative_df[cumulative_df["Additional operators"] > 0].copy()
+    scenario_df = cumulative_df[cumulative_df["Operadores adicionais"] > 0].copy()
 
     if scenario_df.empty:
         return None
 
-    scenario_df["Score per operator"] = (
-        scenario_df["Economic gain"].clip(lower=0)
-        + scenario_df["Reduction in postponed orders"].clip(lower=0) * 10000
-    ) / scenario_df["Additional operators"]
+    scenario_df["Pontuação por operador"] = (
+        scenario_df["Ganho económico"].clip(lower=0)
+        + scenario_df["Redução de pedidos adiados"].clip(lower=0) * 10000
+    ) / scenario_df["Operadores adicionais"]
     best_row = scenario_df.sort_values(
-        ["Score per operator", "Economic gain", "Reduction in postponed orders"],
+        ["Pontuação por operador", "Ganho económico", "Redução de pedidos adiados"],
         ascending=False,
     ).iloc[0]
 
-    day_values = str(best_row["Reinforced days"]).split(", ")
-    line_values = str(best_row["Reinforced lines"]).split(", ")
+    day_values = str(best_row["Dias reforçados"]).split(", ")
+    line_values = str(best_row["Linhas reforçadas"]).split(", ")
     parts = []
 
     for day, line in zip(day_values, line_values):
-        parts.append(f"+1 operator nthe day {day} ({line})")
+        parts.append(f"+1 operador no dia {day} ({line})")
 
     return (
-        "Recommended configuration: "
+        "Configuração recomendada: "
         + ", ".join(parts)
         + ". Impacto: "
-        + f"-{int(best_row['Reduction in postponed orders'])} postponed orders, "
-        + f"+EUR {best_row['Economic gain']:,.0f} of economic value."
+        + f"-{int(best_row['Redução de pedidos adiados'])} pedidos adiados, "
+        + f"+EUR {best_row['Ganho económico']:,.0f} de valor económico."
     )
 
 
 def build_weight_profiles():
     return {
-        "Balanced": dict(DEFAULT_NORMALISED_WEIGHTS),
+        "Equilibrado": dict(DEFAULT_NORMALISED_WEIGHTS),
         "Financeiro": {
             "postponement": 0.10,
             "economic_value": 0.70,
@@ -2059,7 +2058,7 @@ def build_weight_profiles():
             "capacity_utilisation": 0.04,
             "operator_utilisation": 0.01,
         },
-        "Service": {
+        "Serviço": {
             "postponement": 0.15,
             "economic_value": 0.08,
             "delay": 0.65,
@@ -2067,7 +2066,7 @@ def build_weight_profiles():
             "capacity_utilisation": 0.05,
             "operator_utilisation": 0.02,
         },
-        "Efficiency": {
+        "Eficiência": {
             "postponement": 0.10,
             "economic_value": 0.05,
             "delay": 0.05,
@@ -2095,12 +2094,12 @@ def build_weight_sensitivity_results(instance):
 
         rows.append({
             "Perfil": profile_name,
-            "Postponed orders": sum(m.get("postponed_orders", 0) for m in seed_rows) / len(seed_rows),
-            "Postponed boxes": sum(m.get("postponed_boxes", 0) for m in seed_rows) / len(seed_rows),
-            "Economic value produzido": sum(m.get("scheduled_economic_value", 0) for m in seed_rows) / len(seed_rows),
+            "Pedidos adiados": sum(m.get("postponed_orders", 0) for m in seed_rows) / len(seed_rows),
+            "Caixas adiadas": sum(m.get("postponed_boxes", 0) for m in seed_rows) / len(seed_rows),
+            "Valor económico produzido": sum(m.get("scheduled_economic_value", 0) for m in seed_rows) / len(seed_rows),
             "Atraso total": sum(m.get("delay_days_total", 0) for m in seed_rows) / len(seed_rows),
             "Total setup": sum(m.get("setup_total_min", 0) for m in seed_rows) / len(seed_rows),
-            "Minutos de operators usados": sum(m.get("operator_usage_minutes", 0) for m in seed_rows) / len(seed_rows),
+            "Minutos de operadores usados": sum(m.get("operator_usage_minutes", 0) for m in seed_rows) / len(seed_rows),
             "Fitness normalizada": sum(m.get("normalised_fitness", 0) for m in seed_rows) / len(seed_rows),
         })
 
@@ -2108,7 +2107,7 @@ def build_weight_sensitivity_results(instance):
 
 
 def style_balanced_profile(row):
-    if row.get("Perfil") != "Balanced":
+    if row.get("Perfil") != "Equilibrado":
         return [""] * len(row)
 
     return [
@@ -2145,14 +2144,14 @@ def build_portfolio_abc_results(instance):
         )
 
         rows.append({
-            "Scenario": label,
+            "Cenário": label,
             "Pedidos considerados": total_orders,
-            "Pedidos scheduled": total_orders - postponed_orders,
-            "Postponed orders": postponed_orders,
-            "Postponed boxes": metrics.get("postponed_boxes", 0),
-            "Valor scheduled": metrics.get("scheduled_economic_value", 0),
-            "Postponed value": max(0, total_value - metrics.get("scheduled_economic_value", 0)),
-            "Utilisation de capacity (%)": compute_overall_capacity_utilization(
+            "Pedidos planeados": total_orders - postponed_orders,
+            "Pedidos adiados": postponed_orders,
+            "Caixas adiadas": metrics.get("postponed_boxes", 0),
+            "Valor planeado": metrics.get("scheduled_economic_value", 0),
+            "Valor adiado": max(0, total_value - metrics.get("scheduled_economic_value", 0)),
+            "Utilização de capacidade (%)": compute_overall_capacity_utilization(
                 scenario_instance,
                 metrics,
             ),
@@ -2184,7 +2183,7 @@ def build_postponed_value_df(solution, instance):
     if not rows:
         return pd.DataFrame(columns=[
             "Reference",
-            "Boxes",
+            "Caixas",
             "Valor por caixa",
             "Valor perdido",
         ])
@@ -2193,32 +2192,32 @@ def build_postponed_value_df(solution, instance):
 
 
 def render_automatic_scenario_results(results):
-    st.markdown("#### Sensibilidade de capacity")
+    st.markdown("#### Sensibilidade de capacidade")
     individual_df = results["capacity_individual"]
     cumulative_df = results["capacity_cumulative"]
 
     if individual_df.empty:
-        st.info("Sem dados suficientes para calcular a sensibilidade de capacity.")
+        st.info("Sem dados suficientes para calcular a sensibilidade de capacidade.")
     else:
         heatmap_df = individual_df.pivot_table(
             index="Date",
-            columns="Critical line",
-            values="Economic gain",
+            columns="Linha crítica",
+            values="Ganho económico",
             aggfunc="mean",
             fill_value=0,
         )
         heatmap_long = heatmap_df.reset_index().melt(
             id_vars="Date",
-            var_name="Line",
-            value_name="Economic gain",
+            var_name="Linha",
+            value_name="Ganho económico",
         )
         fig_heatmap = px.density_heatmap(
             heatmap_long,
-            x="Line",
+            x="Linha",
             y="Date",
-            z="Economic gain",
+            z="Ganho económico",
             color_continuous_scale="Blues",
-            title="Economic impact of adding 1 operator",
+            title="Impacto económico de adicionar 1 operador",
         )
         st.plotly_chart(fig_heatmap, width="stretch")
         st.dataframe(individual_df, width="stretch", hide_index=True)
@@ -2226,26 +2225,26 @@ def render_automatic_scenario_results(results):
     if not cumulative_df.empty:
         fig_cumulative = go.Figure()
         fig_cumulative.add_trace(go.Scatter(
-            x=cumulative_df["Additional operators"],
-            y=cumulative_df["Postponed orders"],
+            x=cumulative_df["Operadores adicionais"],
+            y=cumulative_df["Pedidos adiados"],
             mode="lines+markers",
-            name="Postponed orders",
+            name="Pedidos adiados",
             line={"color": "#b6003b"},
         ))
         fig_cumulative.add_trace(go.Scatter(
-            x=cumulative_df["Additional operators"],
-            y=cumulative_df["Economic value produzido"],
+            x=cumulative_df["Operadores adicionais"],
+            y=cumulative_df["Valor económico produzido"],
             mode="lines+markers",
-            name="Economic value produzido",
+            name="Valor económico produzido",
             yaxis="y2",
             line={"color": "#153e7e"},
         ))
         fig_cumulative.update_layout(
-            title="Impacto acumulado de operators adicionais",
-            xaxis_title="Additional operators",
-            yaxis={"title": "Postponed orders"},
+            title="Impacto acumulado de operadores adicionais",
+            xaxis_title="Operadores adicionais",
+            yaxis={"title": "Pedidos adiados"},
             yaxis2={
-                "title": "Economic value produzido",
+                "title": "Valor económico produzido",
                 "overlaying": "y",
                 "side": "right",
             },
@@ -2256,7 +2255,7 @@ def render_automatic_scenario_results(results):
         if recommendation:
             st.success(recommendation)
 
-    st.markdown("#### Objective-function weight sensitivity")
+    st.markdown("#### Sensibilidade dos pesos da função objetivo")
     weights_df = results["weights"]
     st.dataframe(
         weights_df.style.apply(style_balanced_profile, axis=1),
@@ -2266,11 +2265,11 @@ def render_automatic_scenario_results(results):
 
     if not weights_df.empty:
         radar_metrics = [
-            "Postponed orders",
-            "Postponed boxes",
-            "Economic value produzido",
+            "Pedidos adiados",
+            "Caixas adiadas",
+            "Valor económico produzido",
             "Total setup",
-            "Minutos de operators usados",
+            "Minutos de operadores usados",
         ]
         fig_radar = go.Figure()
 
@@ -2279,7 +2278,7 @@ def render_automatic_scenario_results(results):
             for metric in radar_metrics:
                 max_value = max(weights_df[metric].max(), 1)
                 value = row[metric] / max_value
-                if metric in {"Postponed orders", "Postponed boxes", "Total setup"}:
+                if metric in {"Pedidos adiados", "Caixas adiadas", "Total setup"}:
                     value = 1 - value
                 values.append(value)
 
@@ -2291,12 +2290,12 @@ def render_automatic_scenario_results(results):
             ))
 
         fig_radar.update_layout(
-            title="Comparison relativa dos perfis de weights",
+            title="Comparação relativa dos perfis de pesos",
             polar={"radialaxis": {"visible": True, "range": [0, 1]}},
         )
         st.plotly_chart(fig_radar, width="stretch")
 
-    st.markdown("#### Cost of postponed baseline orders")
+    st.markdown("#### Custo dos pedidos adiados na base")
     postponed_value_df = results["postponed_value"]
     st.dataframe(postponed_value_df.head(15), width="stretch", hide_index=True)
     if not postponed_value_df.empty:
@@ -2366,19 +2365,19 @@ def normalize_dashboard_weights(weights):
 
 
 def render_weight_experiment(instance, baseline_metrics):
-    st.markdown("#### Priority experiment")
+    st.markdown("#### Experiência de pesos")
     st.caption(
-        "Adjust the relative importance of each criterion. "
-        "Priorities are automatically normalised to sum to 1."
+        "Ajuste a importância relativa de cada critério. "
+        "Os pesos são automaticamente normalizados para somarem 1."
     )
 
     weight_labels = {
-        "postponement": "Postponed orders",
-        "economic_value": "Economic value",
+        "postponement": "Pedidos adiados",
+        "economic_value": "Valor económico",
         "delay": "Atraso de entrega",
         "setup": "Tempo de setup",
-        "capacity_utilisation": "Utilisation de capacity",
-        "operator_utilisation": "Utilisation de operators",
+        "capacity_utilisation": "Utilização de capacidade",
+        "operator_utilisation": "Utilização de operadores",
     }
     slider_cols = st.columns(3)
     raw_weights = {}
@@ -2602,19 +2601,19 @@ def build_added_demand_orders(instance, edited_new_orders_df):
             continue
 
         if not ref_id:
-            warnings.append(f"New order {row_index + 1}: enter the reference.")
+            warnings.append(f"Novo pedido {row_index + 1}: indique a referência.")
             continue
 
         ref = refs_by_id.get(ref_id)
 
         if ref is None:
-            warnings.append(f"New order {row_index + 1}: reference {ref_id} not found.")
+            warnings.append(f"Novo pedido {row_index + 1}: referência {ref_id} não encontrada.")
             continue
 
         boxes = int(max(0, boxes_value or 0))
 
         if boxes <= 0:
-            warnings.append(f"New order {row_index + 1}: indique uma quantidade superior a zero.")
+            warnings.append(f"Novo pedido {row_index + 1}: indique uma quantidade superior a zero.")
             continue
 
         delivery_day, adjusted_delivery_date, was_adjusted = get_delivery_day_from_calendar_for_dashboard(
@@ -2624,8 +2623,8 @@ def build_added_demand_orders(instance, edited_new_orders_df):
 
         if was_adjusted:
             warnings.append(
-                f"New order {row_index + 1}: a entrega foi ajustada para "
-                f"{format_date(adjusted_delivery_date)} because it is not a working day."
+                f"Novo pedido {row_index + 1}: a entrega foi ajustada para "
+                f"{format_date(adjusted_delivery_date)} porque não é dia útil."
             )
 
         fixed_production_date = normalize_calendar_date(
@@ -2636,7 +2635,7 @@ def build_added_demand_orders(instance, edited_new_orders_df):
         if fixed_production_date is not None:
             if fixed_production_date not in working_day_index_by_date:
                 warnings.append(
-                    f"New order {row_index + 1}: the day de production fixo is not a working day."
+                    f"Novo pedido {row_index + 1}: o dia de produção fixo não é dia útil."
                 )
                 continue
 
@@ -2644,8 +2643,8 @@ def build_added_demand_orders(instance, edited_new_orders_df):
 
             if fixed_production_day not in get_valid_days_for_ref(instance, ref):
                 warnings.append(
-                    f"New order {row_index + 1}: a reference {ref_id} not pode "
-                    "ser scheduled nthe day de production fixo."
+                    f"Novo pedido {row_index + 1}: a referência {ref_id} não pode "
+                    "ser planeada no dia de produção fixo."
                 )
                 continue
 
@@ -2724,7 +2723,7 @@ def render_demand_experiment(instance, baseline_solution, baseline_metrics):
             "Incluir": st.column_config.CheckboxColumn(),
             "Boxes": st.column_config.NumberColumn(min_value=0, step=1, format="%d"),
         },
-        disabled=["Order", "Reference", "Line", "Delivery date", "Economic value"],
+        disabled=["Order", "Reference", "Line", "Data de entrega", "Economic value"],
         hide_index=True,
         width="stretch",
         height=360,
@@ -2739,7 +2738,7 @@ def render_demand_experiment(instance, baseline_solution, baseline_metrics):
         for _, row in edited_df[edited_df["Incluir"]].iterrows():
             order_index = int(row["Order"])
             order = deepcopy(instance.get("demand", [])[order_index])
-            order["master_boxes"] = int(max(0, row.get("Boxes", 0) or 0))
+            order["master_boxes"] = int(max(0, row.get("Caixas", 0) or 0))
             selected_demand.append(order)
 
         scenario_instance = make_scenario_instance(instance, demand=selected_demand)
@@ -2772,10 +2771,10 @@ def render_demand_experiment(instance, baseline_solution, baseline_metrics):
     kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
     kpi_col1.metric("Taxa de cumprimento", f"{fulfilment_rate:.1f}%")
     kpi_col2.metric(
-        "Scheduled value",
+        "Valor planeado",
         f"EUR {scenario_metrics.get('scheduled_economic_value', 0):,.0f}",
     )
-    kpi_col3.metric("Utilisation de capacity", f"{capacity_utilization:.1f}%")
+    kpi_col3.metric("Utilização de capacidade", f"{capacity_utilization:.1f}%")
 
     comparison_df = build_what_if_comparison_df(
         baseline_metrics,
@@ -2885,25 +2884,25 @@ def build_locked_orders_for_existing_demand(
         ref = refs_by_id.get(ref_id)
 
         if ref is None:
-            warnings.append(f"Order {original_order_id}: reference {ref_id} not found.")
+            warnings.append(f"Pedido {original_order_id}: referência {ref_id} não encontrada.")
             continue
 
         if fixed_date not in working_day_index_by_date:
             warnings.append(
-                f"Order {original_order_id}: fixed production day is not a working day."
+                f"Pedido {original_order_id}: o dia de produção fixo não é um dia útil."
             )
             continue
 
         fixed_day = working_day_index_by_date[fixed_date]
         if fixed_day not in get_valid_days_for_ref(instance, ref):
             warnings.append(
-                f"Order {original_order_id}: reference {ref_id} cannot be produced on the fixed day."
+                f"Pedido {original_order_id}: a referência {ref_id} não pode ser produzida no dia fixo."
             )
             continue
 
         valid_lines = valid_lines_for_ref(ref)
         if not valid_lines:
-            warnings.append(f"Order {original_order_id}: reference {ref_id} has no valid line.")
+            warnings.append(f"Pedido {original_order_id}: a referência {ref_id} não tem linha válida.")
             continue
 
         scenario_order_id = original_to_scenario_order_id[original_order_id]
@@ -2933,7 +2932,7 @@ def build_locked_orders_for_added_demand(instance, added_orders, first_added_ind
 
         if ref is None:
             warnings.append(
-                f"New order {added_offset + 1}: reference {ref_id} not found."
+                f"Novo pedido {added_offset + 1}: referência {ref_id} não encontrada."
             )
             continue
 
@@ -2941,7 +2940,7 @@ def build_locked_orders_for_added_demand(instance, added_orders, first_added_ind
 
         if not valid_lines:
             warnings.append(
-                f"New order {added_offset + 1}: reference {ref_id} with no valid line."
+                f"Novo pedido {added_offset + 1}: referência {ref_id} sem linha válida."
             )
             continue
 
@@ -2956,28 +2955,33 @@ def build_locked_orders_for_added_demand(instance, added_orders, first_added_ind
 
 
 def render_combined_scenario_experiment(instance, baseline_solution, baseline_metrics):
-    st.subheader("Scenario analysis")
+    st.subheader("Análise de cenários")
     st.caption(
-        "Edit the demand to include, fix specific days for new orders, "
-        "adjust operators by day and, if needed, freeze the plan before a date."
+        "Edite a procura a incluir, fixe dias específicos para novos pedidos, "
+        "ajuste os operadores por dia e, se necessário, congele o plano antes de uma data."
     )
 
     working_days = instance.get("working_days", [])
 
-    st.markdown("**Existing demand to include**")
+    st.markdown("**Procura existente a incluir**")
     demand_df = build_demand_experiment_df(instance)
     edited_demand_df = st.data_editor(
         demand_df,
         column_config={
-            "Incluir": st.column_config.CheckboxColumn(),
-            "Boxes": st.column_config.NumberColumn(min_value=0, step=1, format="%d"),
+            "Order": st.column_config.NumberColumn("Ordem", format="%d"),
+            "Incluir": st.column_config.CheckboxColumn("Incluir"),
+            "Reference": st.column_config.TextColumn("Código"),
+            "Line": st.column_config.TextColumn("Linha"),
+            "Boxes": st.column_config.NumberColumn("Caixas", min_value=0, step=1, format="%d"),
+            "Delivery date": st.column_config.NumberColumn("Entrega", format="%d"),
             "Fixed production day": st.column_config.DateColumn(
-                "Fixed production day",
+                "Dia de produção fixo",
                 min_value=instance.get("working_days", [date.today()])[0],
                 max_value=instance.get("working_days", [date.today()])[-1],
                 format="DD/MM/YYYY",
-                help="Optional. If filled in, this existing order is locked on that production day.",
+                help="Opcional. Se preenchido, este pedido existente fica fixo nesse dia de produção.",
             ),
+            "Economic value": st.column_config.NumberColumn("Valor económico", format="%.2f"),
         },
         disabled=[
             "Order",
@@ -2993,37 +2997,37 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
     )
     edited_demand_df = update_demand_editor_revenue(edited_demand_df, instance)
 
-    st.markdown("**Additional scenario demand**")
+    st.markdown("**Procura adicional do cenário**")
     st.caption(
-        "Add extra orders only for this scenario. "
-        "You can choose the delivery date and also a fixed production day."
+        "Adicione pedidos extra apenas para este cenário. "
+        "Pode escolher a data de entrega e também um dia de produção fixo."
     )
     new_orders_df = build_new_orders_editor_df()
     edited_new_orders_df = st.data_editor(
         new_orders_df,
         column_config={
             "Reference": st.column_config.TextColumn(
-                "Reference code",
+                "Código da referência",
                 help="Exemplo: DC029072",
             ),
             "Boxes": st.column_config.NumberColumn(
-                "Boxes",
+                "Caixas",
                 min_value=0,
                 step=1,
                 format="%d",
             ),
             "Delivery date": st.column_config.DateColumn(
-                "Delivery date",
+                "Data de entrega",
                 min_value=instance.get("working_days", [date.today()])[0],
                 max_value=instance.get("working_days", [date.today()])[-1],
                 format="DD/MM/YYYY",
             ),
             "Fixed production day": st.column_config.DateColumn(
-                "Fixed production day",
+                "Dia de produção fixo",
                 min_value=instance.get("working_days", [date.today()])[0],
                 max_value=instance.get("working_days", [date.today()])[-1],
                 format="DD/MM/YYYY",
-                help="Optional. If filled in, this order is locked on that day.",
+                help="Opcional. Se preenchido, este pedido fica fixo nesse dia.",
             ),
         },
         hide_index=True,
@@ -3046,13 +3050,13 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         instance=instance,
     )
 
-    st.markdown("**Plan freezing**")
+    st.markdown("**Congelamento do plano**")
     freeze_past = st.checkbox(
-        "Do not change anything before a date",
+        "Não alterar nada antes de uma data",
         value=False,
         help=(
-            "Orders already scheduled before the selected date are locked. "
-            "The scenario can only change the plan from that date onward."
+            "Os pedidos já planeados antes da data selecionada ficam bloqueados. "
+            "O cenário só pode alterar o plano a partir dessa data."
         ),
         key="combined_scenario_freeze_past",
     )
@@ -3061,7 +3065,7 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
     if freeze_past:
         if working_days:
             freeze_date = st.date_input(
-                "Change only from",
+                "Alterar apenas a partir de",
                 value=working_days[min(5, len(working_days) - 1)],
                 min_value=working_days[0],
                 max_value=working_days[-1],
@@ -3083,13 +3087,13 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
                 )
             ]
             st.info(
-                f"{len(frozen_preview)} orders scheduled before de "
-                f"{format_date(normalized_freeze_date)} remain frozen."
+                f"{len(frozen_preview)} pedidos planeados antes de "
+                f"{format_date(normalized_freeze_date)} ficam congelados."
             )
         else:
-            st.warning("The current scenario has no working-day calendar.")
+            st.warning("O cenário atual não tem calendário de dias úteis.")
 
-    st.markdown("**Operators and opening hours**")
+    st.markdown("**Operadores e horário de abertura**")
     capacity_df = build_capacity_what_if_df(instance)
     max_operator_option = max(
         int(capacity_df["Current operators"].max()) + 20,
@@ -3098,27 +3102,29 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
     edited_capacity_df = st.data_editor(
         capacity_df,
         column_config={
-            "Day": st.column_config.NumberColumn(format="%d"),
-            "Date": st.column_config.TextColumn(),
-            "Current operators": st.column_config.NumberColumn(format="%d"),
+            "Day": st.column_config.NumberColumn("Dia", format="%d"),
+            "Date": st.column_config.TextColumn("Data"),
+            "Current operators": st.column_config.NumberColumn("Operadores atuais", format="%d"),
             "Scenario operators": st.column_config.SelectboxColumn(
+                "Operadores do cenário",
                 options=list(range(0, max_operator_option + 1)),
                 required=True,
             ),
-            "Current shifts": st.column_config.NumberColumn(format="%d"),
+            "Current shifts": st.column_config.NumberColumn("Turnos atuais", format="%d"),
             "Scenario shifts": st.column_config.SelectboxColumn(
+                "Turnos do cenário",
                 options=[1, 2],
                 required=True,
             ),
-            "Current start": st.column_config.TextColumn(),
+            "Current start": st.column_config.TextColumn("Início atual"),
             "Scenario start": st.column_config.TextColumn(
-                "Scenario start",
-                help="HH:MM format, for example 08:00.",
+                "Início do cenário",
+                help="Formato HH:MM, por exemplo 08:00.",
             ),
-            "End current": st.column_config.TextColumn(),
+            "End current": st.column_config.TextColumn("Fim atual"),
             "Scenario end": st.column_config.TextColumn(
-                "Scenario end",
-                help="HH:MM format, for example 16:30.",
+                "Fim do cenário",
+                help="Formato HH:MM, por exemplo 16:30.",
             ),
         },
         disabled=[
@@ -3137,14 +3143,14 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
 
     scenario_objective_weights = render_scenario_weight_controls()
 
-    if st.button("Simulate scenario", type="primary", width="content"):
+    if st.button("Simular cenário", type="primary", width="content"):
         selected_demand = []
         original_to_scenario_order_id = {}
 
         for _, row in edited_demand_df[edited_demand_df["Incluir"]].iterrows():
             order_index = int(row["Order"])
             order = deepcopy(instance.get("demand", [])[order_index])
-            order["master_boxes"] = int(max(0, row.get("Boxes", 0) or 0))
+            order["master_boxes"] = int(max(0, row.get("Caixas", 0) or 0))
             original_to_scenario_order_id[order_index] = len(selected_demand)
             selected_demand.append(order)
 
@@ -3227,7 +3233,7 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
                 + ", ".join(str(order_id) for order_id in all_lock_conflicts)
             )
 
-        with st.spinner("Running the GA for the combined scenario..."):
+        with st.spinner("A correr o GA para o cenário combinado..."):
             scenario_solution, scenario_metrics, _ = run_dashboard_ga_scenario(
                 scenario_instance,
                 seed=RANDOM_SEED,
@@ -3247,7 +3253,7 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
     scenario_instance = st.session_state.get("combined_scenario_instance")
 
     if scenario_metrics is None or scenario_solution is None or scenario_instance is None:
-        st.info("Edit demand, operators and/or freezing, then click Simulate scenario.")
+        st.info("Edite a procura, os operadores e/ou o congelamento e depois clique em Simular cenário.")
         return
 
     total_boxes = max(
@@ -3268,19 +3274,19 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
     kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5 = st.columns(5)
     kpi_col1.metric("Cumprimento por caixas", f"{box_fulfilment_rate:.1f}%")
     kpi_col2.metric(
-        "Scheduled value",
+        "Valor planeado",
         f"EUR {scenario_metrics.get('scheduled_economic_value', 0):,.0f}",
     )
     kpi_col3.metric(
-        "L1 utilisation",
+        "Utilização L1",
         f"{capacity_utilization_by_line.get('L1', 0):.1f}%",
     )
     kpi_col4.metric(
-        "L2 utilisation",
+        "Utilização L2",
         f"{capacity_utilization_by_line.get('L2', 0):.1f}%",
     )
     kpi_col5.metric(
-        "Utilisation operators",
+        "Utilização de operadores",
         f"{operator_occupancy_pct:.1f}%",
     )
 
@@ -3290,7 +3296,7 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         instance,
         scenario_instance,
     )
-    st.markdown("**Baseline vs. combined scenario**")
+    st.markdown("**Base vs. cenário combinado**")
     st.dataframe(
         comparison_df.style.apply(style_what_if_delta, axis=1),
         width="stretch",
@@ -3315,10 +3321,10 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         operator_occupancy_pct,
     )
 
-    st.markdown("**Resulting scenario plan**")
+    st.markdown("**Plano resultante do cenário**")
 
     if scenario_daily_schedule_df.empty:
-        st.info("The scenario has no scheduled orders.")
+        st.info("O cenário não tem pedidos planeados.")
     else:
         st.dataframe(
             light_table_style(scenario_daily_schedule_df),
@@ -3354,11 +3360,11 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         st.markdown("**Pedidos que mudaram de estado**")
         st.dataframe(movement_df, width="stretch", hide_index=True)
 
-    with st.expander("Scenario postponed orders and capacity", expanded=False):
-        st.markdown("**Scenario postponed orders**")
+    with st.expander("Pedidos adiados e capacidade do cenário", expanded=False):
+        st.markdown("**Pedidos adiados do cenário**")
 
         if scenario_postponed_df.empty:
-            st.success("The scenario has no postponed orders.")
+            st.success("O cenário não tem pedidos adiados.")
         else:
             st.dataframe(
                 light_table_style(scenario_postponed_df),
@@ -3370,7 +3376,7 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         st.markdown("**Capacidade por dia e linha**")
 
         if scenario_capacity_df.empty:
-            st.info("No capacity data is available for this scenario.")
+            st.info("Não existem dados de capacidade para este cenário.")
         else:
             st.dataframe(
                 light_table_style(scenario_capacity_df),
@@ -3388,21 +3394,21 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
     )
     download_col1, download_col2, download_col3 = st.columns(3)
     download_col1.download_button(
-        "Download scenario in Excel",
+        "Descarregar cenário em Excel",
         data=scenario_excel,
         file_name="cenario_plano_producao.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         width="stretch",
     )
     download_col2.download_button(
-        "Download plan CSV",
+        "Descarregar plano em CSV",
         data=scenario_daily_schedule_df.to_csv(index=False).encode("utf-8-sig"),
         file_name="cenario_plano_producao.csv",
         mime="text/csv",
         width="stretch",
     )
     download_col3.download_button(
-        "Download postponed orders CSV",
+        "Descarregar pedidos adiados em CSV",
         data=scenario_postponed_df.to_csv(index=False).encode("utf-8-sig"),
         file_name="cenario_pedidos_adiados.csv",
         mime="text/csv",
@@ -3457,23 +3463,23 @@ def build_capacity_df(instance, best_metrics):
 
 def build_capacity_utilization_chart(capacity_chart_df, date_title):
     capacity_chart_df = capacity_chart_df.copy()
-    max_utilization = capacity_chart_df["Utilisation (%)"].max()
+    max_utilization = capacity_chart_df["Utilização (%)"].max()
     y_max = max(100, max_utilization + 10)
 
     bars = (
         alt.Chart(capacity_chart_df)
         .mark_bar()
         .encode(
-            x=alt.X("Production date:N", title=date_title),
-            xOffset=alt.XOffset("Line:N"),
+            x=alt.X("Data de produção:N", title=date_title),
+            xOffset=alt.XOffset("Linha:N"),
             y=alt.Y(
-                "Utilisation (%):Q",
-                title="Utilisation (%)",
+                "Utilização (%):Q",
+                title="Utilização (%)",
                 scale=alt.Scale(domain=[0, y_max]),
             ),
             color=alt.Color(
-                "Line:N",
-                title="Line",
+                "Linha:N",
+                title="Linha",
                 scale=alt.Scale(
                     domain=["L1", "L2"],
                     range=["#153e7e", "#b6003b"],
@@ -3484,7 +3490,7 @@ def build_capacity_utilization_chart(capacity_chart_df, date_title):
     )
     labels_inside = (
         alt.Chart(capacity_chart_df)
-        .transform_filter(alt.datum["Utilisation (%)"] >= 15)
+        .transform_filter(alt.datum["Utilização (%)"] >= 15)
         .mark_text(
             color="#ffffff",
             fontWeight="bold",
@@ -3492,15 +3498,15 @@ def build_capacity_utilization_chart(capacity_chart_df, date_title):
             dy=6,
         )
         .encode(
-            x=alt.X("Production date:N"),
-            xOffset=alt.XOffset("Line:N"),
-            y=alt.Y("Utilisation (%):Q"),
-            text=alt.Text("Line:N"),
+            x=alt.X("Data de produção:N"),
+            xOffset=alt.XOffset("Linha:N"),
+            y=alt.Y("Utilização (%):Q"),
+            text=alt.Text("Linha:N"),
         )
     )
     labels_above = (
         alt.Chart(capacity_chart_df)
-        .transform_filter(alt.datum["Utilisation (%)"] < 15)
+        .transform_filter(alt.datum["Utilização (%)"] < 15)
         .mark_text(
             color="#172033",
             fontWeight="bold",
@@ -3508,10 +3514,10 @@ def build_capacity_utilization_chart(capacity_chart_df, date_title):
             dy=-4,
         )
         .encode(
-            x=alt.X("Production date:N"),
-            xOffset=alt.XOffset("Line:N"),
-            y=alt.Y("Utilisation (%):Q"),
-            text=alt.Text("Line:N"),
+            x=alt.X("Data de produção:N"),
+            xOffset=alt.XOffset("Linha:N"),
+            y=alt.Y("Utilização (%):Q"),
+            text=alt.Text("Linha:N"),
         )
     )
     target = (
@@ -3523,7 +3529,7 @@ def build_capacity_utilization_chart(capacity_chart_df, date_title):
         )
         .encode(
             y=alt.Y("Meta:Q"),
-            tooltip=[alt.Tooltip("Meta:Q", title="Utilisation target (%)")],
+            tooltip=[alt.Tooltip("Meta:Q", title="Objetivo de utilização (%)")],
         )
     )
 
@@ -3609,16 +3615,15 @@ def build_daily_product_schedule_df(instance, plan_df, metrics):
 
         for _, product in day_products.iterrows():
             rows.append({
-                "Production date": get_production_date(instance, day),
-                "Day": day,
-                "Shifts": instance.get("daily_shifts", {}).get(day, 1),
-                "Line": product["Line"],
-                "Sequence": product["Seq."],
-                "Product": product["Reference"],
-                "Name": product.get("Reference name", ""),
-                "Quantity": product["Master boxes"],
+                "Data de produção": get_production_date(instance, day),
+                "Dia": day,
+                "Turnos": instance.get("daily_shifts", {}).get(day, 1),
+                "Linha": product["Line"],
+                "Sequência": product["Seq."],
+                "Produto": product["Reference"],
+                "Quantidade": product["Master boxes"],
                 "Setup (min)": product.get("Setup time (min)", 0),
-                "Production time (min)": product.get("Production time (min)", 0),
+                "Tempo de produção (min)": product.get("Production time (min)", 0),
             })
 
         max_utilization = 0
@@ -3649,16 +3654,15 @@ def build_daily_product_schedule_df(instance, plan_df, metrics):
 
         if day_products.empty:
             rows.append({
-                "Production date": get_production_date(instance, day),
-                "Day": day,
-                "Shifts": instance.get("daily_shifts", {}).get(day, 1),
-                "Line": "",
-                "Sequence": "",
-                "Product": "",
-                "Name": "",
-                "Quantity": "",
+                "Data de produção": get_production_date(instance, day),
+                "Dia": day,
+                "Turnos": instance.get("daily_shifts", {}).get(day, 1),
+                "Linha": "",
+                "Sequência": "",
+                "Produto": "",
+                "Quantidade": "",
                 "Setup (min)": "",
-                "Production time (min)": "",
+                "Tempo de produção (min)": "",
                 "Estado": day_status,
             })
         else:
@@ -3920,7 +3924,7 @@ def render_interactive_table(df, key, height=420):
     csv_date = arrow_df.to_csv(index=False).encode("utf-8-sig")
 
     st.download_button(
-        label="Download table as CSV",
+        label="Descarregar tabela em CSV",
         data=csv_date,
         file_name=f"{key}.csv",
         mime="text/csv",
@@ -3958,104 +3962,110 @@ def render_scenario_result(name, result_df):
     if result_df is None or result_df.empty:
         return
 
+    display_result_df = result_df.rename(columns={
+        "Postponed orders": "Pedidos adiados",
+        "Economic value scheduled": "Valor económico planeado",
+        "Multiplicador da demand": "Multiplicador da procura",
+    })
+
     if name == "Capacidade":
         chart = (
-            alt.Chart(result_df)
+            alt.Chart(display_result_df)
             .mark_line(point=True, color="#153e7e", strokeWidth=3)
             .encode(
-                x=alt.X("Capacidade (%):Q", title="Available capacity (%)"),
-                y=alt.Y("Postponed orders:Q", title="Postponed orders"),
-                tooltip=list(result_df.columns),
+                x=alt.X("Capacidade (%):Q", title="Capacidade disponível (%)"),
+                y=alt.Y("Pedidos adiados:Q", title="Pedidos adiados"),
+                tooltip=list(display_result_df.columns),
             )
             .properties(
-                title="Postponed orders as a function of capacity",
+                title="Pedidos adiados em função da capacidade",
                 height=360,
             )
         )
-    elif name == "Weights":
+    elif name == "Pesos":
         chart = (
-            alt.Chart(result_df)
+            alt.Chart(display_result_df)
             .mark_circle(size=130)
             .encode(
-                x=alt.X("Postponed orders:Q", title="Postponed orders"),
+                x=alt.X("Pedidos adiados:Q", title="Pedidos adiados"),
                 y=alt.Y(
-                    "Economic value scheduled:Q",
-                    title="Scheduled economic value (EUR)",
+                    "Valor económico planeado:Q",
+                    title="Valor económico planeado (EUR)",
                 ),
                 color=alt.Color(
                     "Peso adiamento:Q",
                     title="Peso do adiamento",
                     scale=alt.Scale(range=["#9db4d5", "#153e7e"]),
                 ),
-                tooltip=list(result_df.columns),
+                tooltip=list(display_result_df.columns),
             )
             .properties(
-                title="Trade-off between postponement and economic value",
+                title="Trade-off entre adiamento e valor económico",
                 height=360,
             )
         )
     else:
         chart = (
-            alt.Chart(result_df)
+            alt.Chart(display_result_df)
             .mark_line(point=True, color="#b6003b", strokeWidth=3)
             .encode(
                 x=alt.X(
-                    "Multiplicador da demand:Q",
-                    title="Multiplicador da demand",
+                    "Multiplicador da procura:Q",
+                    title="Multiplicador da procura",
                 ),
-                y=alt.Y("Postponed orders:Q", title="Postponed orders"),
-                tooltip=list(result_df.columns),
+                y=alt.Y("Pedidos adiados:Q", title="Pedidos adiados"),
+                tooltip=list(display_result_df.columns),
             )
             .properties(
-                title="Plan degradation with increasing demand",
+                title="Degradação do plano com aumento da procura",
                 height=360,
             )
         )
 
     st.altair_chart(chart, width="stretch")
     render_interactive_table(
-        result_df,
+        display_result_df,
         key=f"analise_{name.lower()}",
         height=360,
     )
 
 
 def render_scenario_analysis():
-    st.header("Scenario analysis")
+    st.header("Análise de cenários")
     context = get_ga_context()
 
     if context is None:
         st.info(
-            "Generate the plan first in Production plan. "
-            "The analyses use exactly the same instance and parameters."
+            "Gere primeiro o plano no separador Plano de produção. "
+            "As análises usam exatamente a mesma instância e os mesmos parâmetros."
         )
         return
 
     instance, _, _ = context
     analysis_labels = {
-        "Sensibilidade da capacity": "Capacidade",
-        "Sensibilidade dos weights": "Weights",
-        "Demand volume stress test": "Demand",
+        "Sensibilidade da capacidade": "Capacidade",
+        "Sensibilidade dos pesos": "Pesos",
+        "Teste de volume de procura": "Procura",
     }
     selected_label = st.radio(
-        "Analysis to display",
+        "Análise a mostrar",
         options=list(analysis_labels),
         horizontal=True,
     )
     selected_name = analysis_labels[selected_label]
     button_col1, button_col2 = st.columns([1, 1])
     run_selected = button_col1.button(
-        "Run selected analysis",
+        "Correr análise selecionada",
         type="primary",
         width="stretch",
     )
     run_all = button_col2.button(
-        "Run all analyses",
+        "Correr todas as análises",
         width="stretch",
     )
     st.caption(
-        "Each point uses random seed 52 and the same parameters as the main plan. "
-        "Results are stored during the session."
+        "Cada ponto usa a seed 52 e os mesmos parâmetros do plano principal. "
+        "Os resultados ficam guardados durante a sessão."
     )
 
     if "scenario_results" not in st.session_state:
@@ -4063,8 +4073,8 @@ def render_scenario_analysis():
 
     analyses = {
         "Capacidade": capacity_sensitivity,
-        "Weights": weight_sensitivity,
-        "Demand": demand_stress_test,
+        "Pesos": weight_sensitivity,
+        "Procura": demand_stress_test,
     }
 
     if run_selected or run_all:
@@ -4090,31 +4100,31 @@ def render_scenario_analysis():
                 (analysis_index + 1) / len(names_to_run)
             )
 
-        progress_text.markdown("**Analyses completed.**")
+        progress_text.markdown("**Análises concluídas.**")
 
     result_df = st.session_state["scenario_results"].get(selected_name)
 
     if result_df is None:
-        st.info("This analysis has not been run yet.")
+        st.info("Esta análise ainda não foi corrida.")
     else:
         render_scenario_result(selected_name, result_df)
 
 
 def performance_comparison_df(ga_metrics, baseline_metrics):
     rows = [
-        ("Normalised fitness", "normalised_fitness"),
-        ("Postponed orders", "postponed_orders"),
-        ("Postponed boxes", "postponed_boxes"),
+        ("Fitness normalizada", "normalised_fitness"),
+        ("Pedidos adiados", "postponed_orders"),
+        ("Caixas adiadas", "postponed_boxes"),
         ("Atraso total (dias)", "delay_days_total"),
         ("Setup total (min)", "setup_total_min"),
-        ("Economic value scheduled", "scheduled_economic_value"),
-        ("Utilisation de operators (min)", "operator_usage_minutes"),
+        ("Valor económico planeado", "scheduled_economic_value"),
+        ("Utilização de operadores (min)", "operator_usage_minutes"),
     ]
     return pd.DataFrame([
         {
             "Indicador": label,
             "Plano GA": ga_metrics.get(key, 0),
-            "Non-optimised reference": baseline_metrics.get(key, 0),
+            "Referência não otimizada": baseline_metrics.get(key, 0),
         }
         for label, key in rows
     ])
@@ -4160,11 +4170,11 @@ def build_line_metrics_summary_df(instance, solution, metrics):
 
 
 def render_performance_metrics():
-    st.header("Metrics de desempenho")
+    st.header("Métricas de desempenho")
     context = get_ga_context()
 
     if context is None:
-        st.info("Generate the plan first in Production plan.")
+        st.info("Gere primeiro o plano no separador Plano de produção.")
         return
 
     instance, solution, metrics = context
@@ -4174,7 +4184,7 @@ def render_performance_metrics():
         metrics,
     )
 
-    st.subheader("Line summary")
+    st.subheader("Resumo por linha")
     st.dataframe(
         line_summary_df.style.format({
             "Tempo total (h)": "{}",
@@ -4190,8 +4200,8 @@ def render_performance_metrics():
     breakdown = metrics.get("normalised_fitness_breakdown", {})
     breakdown_df = pd.DataFrame([
         {
-            "Component": component,
-            "Contribution": value,
+            "Componente": component,
+            "Contribuição": value,
         }
         for component, value in breakdown.items()
         if component != "total"
@@ -4200,30 +4210,30 @@ def render_performance_metrics():
         "postponement": "Adiamento",
         "delay": "Atraso",
         "setup": "Setup",
-        "economic_value": "Economic value",
-        "operator_utilisation": "Utilisation de operators",
+        "economic_value": "Valor económico",
+        "operator_utilisation": "Utilização de operadores",
     }
-    breakdown_df["Component"] = breakdown_df["Component"].replace(labels)
+    breakdown_df["Componente"] = breakdown_df["Componente"].replace(labels)
 
     breakdown_chart = (
         alt.Chart(breakdown_df)
         .mark_bar()
         .encode(
-            x=alt.X("Contribution:Q", title="Contribution to fitness"),
+            x=alt.X("Contribuição:Q", title="Contribuição para a fitness"),
             y=alt.Y(
-                "Component:N",
+                "Componente:N",
                 title=None,
                 sort="-x",
             ),
             color=alt.condition(
-                alt.datum["Contribution"] < 0,
+                alt.datum["Contribuição"] < 0,
                 alt.value("#153e7e"),
                 alt.value("#b6003b"),
             ),
-            tooltip=["Component", alt.Tooltip("Contribution:Q", format=".6f")],
+            tooltip=["Componente", alt.Tooltip("Contribuição:Q", format=".6f")],
         )
         .properties(
-            title="Normalised fitness breakdown",
+            title="Decomposição da fitness normalizada",
             height=270,
         )
     )
@@ -4233,22 +4243,22 @@ def render_performance_metrics():
 
     if not capacity_df.empty:
         capacity_chart_df = capacity_df.rename(columns={
-            "Production date": "Production date",
-            "Day": "Day",
-            "Line": "Line",
-            "Shifts": "Shifts",
-            "Production time (min)": "Production time (min)",
-            "Setup time (min)": "Setup time (min)",
+            "Production date": "Data de produção",
+            "Day": "Dia",
+            "Line": "Linha",
+            "Shifts": "Turnos",
+            "Production time (min)": "Tempo de produção (min)",
+            "Setup time (min)": "Tempo de setup (min)",
             "Occupied time (min)": "Tempo ocupado (min)",
-            "Available time (min)": "Available time (min)",
-            "Capacity excess (min)": "Excesso de capacity (min)",
-            "Utilization (%)": "Utilisation (%)",
+            "Available time (min)": "Tempo disponível (min)",
+            "Capacity excess (min)": "Excesso de capacidade (min)",
+            "Utilization (%)": "Utilização (%)",
         })
         capacity_chart = build_capacity_utilization_chart(
             capacity_chart_df,
-            "Date",
+            "Data",
         ).properties(
-            title="Daily capacity utilisation by line",
+            title="Utilização diária de capacidade por linha",
             height=340,
         )
         st.altair_chart(capacity_chart, width="stretch")
@@ -4256,7 +4266,7 @@ def render_performance_metrics():
     signature = st.session_state.get("ga_instance_signature")
 
     if st.session_state.get("baseline_signature") != signature:
-        with st.spinner("Building the non-optimised reference..."):
+        with st.spinner("A construir a referência não otimizada..."):
             baseline_solution, baseline_metrics = build_greedy_baseline(
                 deepcopy(instance)
             )
@@ -4268,7 +4278,7 @@ def render_performance_metrics():
         metrics,
         st.session_state["baseline_metrics"],
     )
-    st.subheader("GA vs. non-optimised reference")
+    st.subheader("GA vs. referência não otimizada")
     render_interactive_table(
         comparison_df,
         key="comparacao_ga_baseline",
@@ -4278,16 +4288,16 @@ def render_performance_metrics():
 
 def metrics_summary_df(metrics):
     keys = [
-        ("Normalised fitness", "normalised_fitness"),
-        ("Postponed orders", "postponed_orders"),
-        ("Postponed boxes", "postponed_boxes"),
+        ("Fitness normalizada", "normalised_fitness"),
+        ("Pedidos adiados", "postponed_orders"),
+        ("Caixas adiadas", "postponed_boxes"),
         ("Atraso total (dias)", "delay_days_total"),
         ("Setup total (min)", "setup_total_min"),
-        ("Economic value scheduled", "scheduled_economic_value"),
-        ("Economic value adiado", "postponed_economic_value"),
-        ("Kg scheduled", "scheduled_kg"),
-        ("Postponed kg", "postponed_kg"),
-        ("Operator-minutes used", "operator_usage_minutes"),
+        ("Valor económico planeado", "scheduled_economic_value"),
+        ("Valor económico adiado", "postponed_economic_value"),
+        ("Kg planeados", "scheduled_kg"),
+        ("Kg adiados", "postponed_kg"),
+        ("Operador-minutos usados", "operator_usage_minutes"),
     ]
     return pd.DataFrame([
         {"Indicador": label, "Valor": metrics.get(key, 0)}
@@ -4296,11 +4306,11 @@ def metrics_summary_df(metrics):
 
 
 def render_export():
-    st.header("Export")
+    st.header("Exportação")
     context = get_ga_context()
 
     if context is None:
-        st.info("Generate the plan first in Production plan.")
+        st.info("Gere primeiro o plano no separador Plano de produção.")
         return
 
     instance, solution, metrics = context
@@ -4317,14 +4327,14 @@ def render_export():
     col1, col2, col3 = st.columns(3)
 
     col1.download_button(
-        "Download plan CSV",
+        "Descarregar plano em CSV",
         plan_df.to_csv(index=False).encode("utf-8-sig"),
         file_name="plano_producao.csv",
         mime="text/csv",
         width="stretch",
     )
     col2.download_button(
-        "Download scenarios CSV",
+        "Descarregar cenários em CSV",
         scenario_df.to_csv(index=False).encode("utf-8-sig"),
         file_name="resultados_cenarios.csv",
         mime="text/csv",
@@ -4332,7 +4342,7 @@ def render_export():
         width="stretch",
     )
     col3.download_button(
-        "Download metrics CSV",
+        "Descarregar métricas em CSV",
         summary_df.to_csv(index=False).encode("utf-8-sig"),
         file_name="resumo_metricas.csv",
         mime="text/csv",
@@ -4341,7 +4351,7 @@ def render_export():
 
 
 st.set_page_config(
-    page_title="Production Planning - Company X",
+    page_title="Planeamento da Produção - Empresa X",
     layout="wide",
 )
 
@@ -4816,8 +4826,8 @@ st.markdown(
         <div class="brand-line">
             <span class="kaizen-mark"><span class="blue-triangle"></span><span class="red-triangle"></span></span>
             <span class="kaizen-word">KAIZEN<small>INSTITUTE</small></span>
-        </div>        <div class="main-title">PRODUCTION PLANNING</div>
-        <div class="subtitle">Monthly production planning</div>
+        </div>        <div class="main-title">PLANEAMENTO DA PRODUÇÃO</div>
+        <div class="subtitle">Planeamento mensal da produção</div>
     </div>
     """,
     unsafe_allow_html=True,
@@ -4825,38 +4835,38 @@ st.markdown(
 
 
 def render_configuration_plan():
-    st.subheader("Input data file")
-    st.caption("Upload the monthly Excel file to start planning.")
+    st.subheader("Ficheiro de dados de entrada")
+    st.caption("Carregue o ficheiro Excel mensal para iniciar o planeamento.")
     uploaded_excel = st.file_uploader(
-        "Drag and drop the Excel file here",
+        "Arraste e largue aqui o ficheiro Excel",
         type=["xlsx"],
         accept_multiple_files=False,
-        help="You can also click the upload area to select the file manually.",
+        help="Também pode clicar na área de upload para selecionar o ficheiro manualmente.",
     )
 
     if uploaded_excel is None:
-        st.info("Waiting for an Excel file. Drag it into the box above or click to select it.")
+        st.info("À espera de um ficheiro Excel. Arraste-o para a caixa acima ou clique para selecionar.")
         return
 
     workbook_errors = validate_input_workbook(uploaded_excel)
 
     if workbook_errors:
         st.error(
-            "The uploaded file does not match the required model standard."
+            "O ficheiro carregado não corresponde ao modelo obrigatório."
         )
         for error in workbook_errors:
             st.warning(error)
         st.info(
-            "The file must contain the sheets 2_REFERENCIAS, 3_SETUPS and 5_PROCURA. "
-            "The 5_PROCURA sheet must contain only the three required columns: "
-            "Reference, Boxes/Quantity and Delivery date."
+            "O ficheiro deve conter as folhas 2_REFERENCIAS, 3_SETUPS e 5_PROCURA. "
+            "A folha 5_PROCURA deve conter apenas as três colunas obrigatórias: "
+            "referência, caixas/quantidade e data de entrega."
         )
         return
     
     try:
         base_instance = load_real_instance(uploaded_excel)
     except Exception as exc:
-        st.error(f"Could not load the input data file: {exc}")
+        st.error(f"Não foi possível carregar o ficheiro de entrada: {exc}")
         return
     
     default_working_days = base_instance.get("working_days", [])
@@ -4868,24 +4878,24 @@ def render_configuration_plan():
         default_start_date = date.today()
         default_end_date = date.today()
     
-    st.subheader("Operational planning parameters")
+    st.subheader("Parâmetros operacionais do planeamento")
     
     horizon_col1, horizon_col2 = st.columns(2)
     
     with horizon_col1:
         planning_start_date = st.date_input(
-            "Planning horizon start",
+            "Início do horizonte de planeamento",
             value=default_start_date,
         )
     
     with horizon_col2:
         planning_end_date = st.date_input(
-            "Planning horizon end",
+            "Fim do horizonte de planeamento",
             value=default_end_date,
         )
     
     if planning_end_date < planning_start_date:
-        st.error("The end date cannot be earlier than the start date.")
+        st.error("A data final não pode ser anterior à data inicial.")
         return
     
     all_calendar_days = []
@@ -4896,11 +4906,11 @@ def render_configuration_plan():
         current_day += timedelta(days=1)
     
     non_working_days = st.multiselect(
-        "Cleaning days / holidays",
+        "Dias de limpeza / feriados",
         options=all_calendar_days,
         format_func=format_date,
         default=[],
-        placeholder="Select days",
+        placeholder="Selecionar dias",
     )
     
     working_days = build_working_days_from_dashboard(
@@ -4910,7 +4920,7 @@ def render_configuration_plan():
     )
     
     if not working_days:
-        st.error("The selected horizon has no working days available for planning.")
+        st.error("O horizonte selecionado não tem dias úteis disponíveis para planeamento.")
         return
     
     default_operators = DEFAULT_OPERATORS
@@ -4919,13 +4929,13 @@ def render_configuration_plan():
     end_times_by_day = {}
     shifts_by_day = {}
     
-    with st.expander("Operators and schedules by day", expanded=True):
+    with st.expander("Operadores e horários por dia", expanded=True):
         st.caption(
-            "Os values below usam os values default como ponto de partida, "
-            "mas podem ser ajustados para each planning day."
+            "Os valores abaixo usam os valores padrão como ponto de partida, "
+            "mas podem ser ajustados para cada dia de planeamento."
         )
         replicate_first_day = st.toggle(
-            "Copy the first day's configuration to the following days?",
+            "Copiar a configuração do primeiro dia para os dias seguintes?",
             value=False,
         )
     
@@ -4942,18 +4952,18 @@ def render_configuration_plan():
                 end_times_by_day[day_index] = end_times_by_day[1]
 
                 with day_col2:
-                    st.caption("Operators")
+                    st.caption("Operadores")
                     st.markdown(f"**{operators_by_day[day_index]}**")
                 with day_col3:
-                    st.caption("Shifts")
+                    st.caption("Turnos")
                     st.markdown(f"**{shifts_by_day[day_index]}**")
                 with day_col4:
-                    st.caption("Start")
+                    st.caption("Início")
                     st.markdown(
                         f"**{start_times_by_day[day_index].strftime('%H:%M')}**"
                     )
                 with day_col5:
-                    st.caption("End")
+                    st.caption("Fim")
                     st.markdown(
                         f"**{end_times_by_day[day_index].strftime('%H:%M')}**"
                     )
@@ -4961,7 +4971,7 @@ def render_configuration_plan():
 
             with day_col2:
                 operators_by_day[day_index] = st.slider(
-                    "Operators",
+                    "Operadores",
                     min_value=0,
                     max_value=max(40, default_operators + 20),
                     value=default_operators,
@@ -4971,7 +4981,7 @@ def render_configuration_plan():
 
             with day_col3:
                 shifts_by_day[day_index] = st.selectbox(
-                    "Shifts",
+                    "Turnos",
                     options=[1, 2],
                     index=0,
                     key=f"shifts_day_{day_index}",
@@ -4979,14 +4989,14 @@ def render_configuration_plan():
 
             with day_col4:
                 start_times_by_day[day_index] = st.time_input(
-                    "Start",
+                    "Início",
                     value=time(8, 0),
                     key=f"start_time_day_{day_index}",
                 )
 
             with day_col5:
                 end_times_by_day[day_index] = st.time_input(
-                    "End",
+                    "Fim",
                     value=time(16, 30),
                     key=f"end_time_day_{day_index}",
                 )
@@ -5006,27 +5016,27 @@ def render_configuration_plan():
     
     for day_index, working_day in enumerate(working_days, start=1):
         scenario_rows.append({
-            "Day": day_index,
-            "Date": format_date(working_day),
-            "Available operators": operators_by_day[day_index],
-            "Shifts": shifts_by_day[day_index],
-            "Start": start_times_by_day[day_index].strftime("%H:%M"),
-            "End": end_times_by_day[day_index].strftime("%H:%M"),
-            "Available capacity (min)": instance["daily_capacity_min"][day_index],
+            "Dia": day_index,
+            "Data": format_date(working_day),
+            "Operadores disponíveis": operators_by_day[day_index],
+            "Turnos": shifts_by_day[day_index],
+            "Início": start_times_by_day[day_index].strftime("%H:%M"),
+            "Fim": end_times_by_day[day_index].strftime("%H:%M"),
+            "Capacidade disponível (min)": instance["daily_capacity_min"][day_index],
         })
     
-    st.subheader("Scenario parameter summary")
+    st.subheader("Resumo dos parâmetros do cenário")
     st.dataframe(
         pd.DataFrame(scenario_rows),
         width="stretch",
         hide_index=True,
     )
     
-    run_button = st.button("Generate production plan", width="content")
+    run_button = st.button("Gerar plano de produção", width="content")
     
     if run_button:
         try:
-            with st.spinner("Loading data and running the genetic algorithm..."):
+            with st.spinner("A carregar dados e a correr o algoritmo genético..."):
                 planning_month = get_planning_month(instance)
                 print("\n[DASHBOARD] GA STARTED", flush=True)
                 print(
@@ -5072,11 +5082,11 @@ def render_configuration_plan():
                 st.session_state.get("scenario_version", 0) + 1
             )
         except Exception as exc:
-            st.error(f"Could not generate the plan: {exc}")
+            st.error(f"Não foi possível gerar o plano: {exc}")
             return
     
     if "ga_solution" not in st.session_state:
-        st.info("Press the button to generate the production plan.")
+        st.info("Clique no botão para gerar o plano de produção.")
         return
     
     if st.session_state.get("ga_instance_signature") != current_instance_signature:
@@ -5090,9 +5100,9 @@ def render_configuration_plan():
             st.session_state.pop(session_key, None)
     
         st.warning(
-            "The input data or operational parameters were changed. "
-            "Generate the plan again to avoid mixing an old solution "
-            "with the current instance."
+            "Os dados de entrada ou os parâmetros operacionais foram alterados. "
+            "Gere novamente o plano para evitar misturar uma solução antiga "
+            "com a instância atual."
         )
         return
     
@@ -5104,11 +5114,11 @@ def render_configuration_plan():
     
     if duplicate_orders or missing_orders or unexpected_orders:
         st.error(
-            "The saved solution does not contain exactly one occurrence of each order. "
+            "A solução guardada não contém exatamente uma ocorrência de cada pedido. "
             f"Duplieachs: {duplicate_orders or 'nenhuma'}; "
             f"em falta: {missing_orders or 'nenhuma'}; "
             f"inesperadas: {unexpected_orders or 'nenhuma'}. "
-            "Generate the plan again."
+            "Gere novamente o plano."
         )
         return
     
@@ -5124,7 +5134,7 @@ def render_configuration_plan():
         get_planning_month(instance),
     )
     
-    st.success(f"Plano generated com sucesso para {planning_month}.")
+    st.success(f"Plano gerado com sucesso para {planning_month}.")
     plan_df = build_plan_df(instance, best_solution)
     simple_plan_df = build_simple_daily_plan_df(instance, plan_df)
     daily_product_schedule_df = (
@@ -5134,73 +5144,71 @@ def render_configuration_plan():
         ]
         .sort_values(["Day", "Line", "Seq."])
         .rename(columns={
-            "Production date": "Production date",
-            "Day": "Day",
-            "Line": "Line",
-            "Seq.": "Sequence",
-            "Reference": "Product",
-            "Reference name": "Name",
-            "Master boxes": "Quantity",
+            "Production date": "Data de produção",
+            "Day": "Dia",
+            "Line": "Linha",
+            "Seq.": "Sequência",
+            "Reference": "Produto",
+            "Master boxes": "Quantidade",
             "Setup time (min)": "Setup (min)",
-            "Production time (min)": "Production time (min)",
+            "Production time (min)": "Tempo de produção (min)",
         })
     )
     daily_product_schedule_df = daily_product_schedule_df[[
-        "Production date",
-        "Day",
-        "Line",
-        "Sequence",
-        "Product",
-        "Name",
-        "Quantity",
+        "Data de produção",
+        "Dia",
+        "Linha",
+        "Sequência",
+        "Produto",
+        "Quantidade",
         "Setup (min)",
-        "Production time (min)",
+        "Tempo de produção (min)",
     ]]
     capacity_df = build_capacity_df(instance, best_metrics)
     time_slot_df = build_time_slot_activity_df(instance, best_metrics)
     
-    st.subheader("Main indicators")
+    st.subheader("Indicadores principais")
     capacity_utilization_by_line = compute_capacity_utilization_by_line(
         instance,
         best_metrics,
     )
 
     col1, col2, col3, col4, col5, col6 = st.columns(6)
-    col1.metric("Produced kg", f"{best_metrics.get('scheduled_kg', 0):,.1f}")
-    col2.metric("Postponed kg", f"{best_metrics.get('postponed_kg', 0):,.1f}")
-    col3.metric("Scheduled value", f"EUR {best_metrics.get('scheduled_economic_value', 0):,.0f}")
-    col4.metric("Postponed value", f"EUR {best_metrics.get('postponed_economic_value', 0):,.0f}")
-    col5.metric("L1 utilisation", f"{capacity_utilization_by_line.get('L1', 0):.1f}%")
-    col6.metric("L2 utilisation", f"{capacity_utilization_by_line.get('L2', 0):.1f}%")
+    col1.metric("Kg produzidos", f"{best_metrics.get('scheduled_kg', 0):,.1f}")
+    col2.metric("Kg adiados", f"{best_metrics.get('postponed_kg', 0):,.1f}")
+    col3.metric("Valor planeado", f"EUR {best_metrics.get('scheduled_economic_value', 0):,.0f}")
+    col4.metric("Valor adiado", f"EUR {best_metrics.get('postponed_economic_value', 0):,.0f}")
+    col5.metric("Utilização L1", f"{capacity_utilization_by_line.get('L1', 0):.1f}%")
+    col6.metric("Utilização L2", f"{capacity_utilization_by_line.get('L2', 0):.1f}%")
 
-    st.subheader("Plan calendar")
+    st.subheader("Calendário do plano")
     render_daily_plan_calendar(instance, simple_plan_df, best_metrics)
 
-    st.subheader("Daily production sequence")
+    st.subheader("Sequência diária de produção")
     render_interactive_table(
         daily_product_schedule_df,
         key="sequencia_diaria_producao",
         height=420,
     )
     
-    st.subheader("Operator occupancy by time slot")
+    st.subheader("Ocupação de operadores por intervalo horário")
     if time_slot_df.empty:
-        st.info("No hourly simulation is available.")
+        st.info("Não existe simulação horária disponível.")
     else:
         operators_chart_df = time_slot_df.rename(columns={
-            "Production date": "Production date",
-            "Day": "Day",
-            "Time slot": "Time slot",
-            "Slot start (min)": "Start do intervalo (min)",
-            "Standard operators": "Available operators",
-            "L1 references": "References L1",
+            "Production date": "Data de produção",
+            "Day": "Dia",
+            "Time slot": "Intervalo horário",
+            "Slot start (min)": "Início do intervalo (min)",
+            "Standard operators": "Operadores disponíveis",
+            "L1 references": "Referências L1",
             "L1 activity": "Atividade L1",
-            "L1 operators": "Operators L1",
-            "L2 references": "References L2",
+            "L1 operators": "Operadores L1",
+            "L2 references": "Referências L2",
             "L2 activity": "Atividade L2",
-            "L2 operators": "Operators L2",
-            "Total operators used": "Operators used",
-            "Operator excess": "Excesso de operators",
+            "L2 operators": "Operadores L2",
+            "Total operators used": "Operadores usados",
+            "Operator excess": "Excesso de operadores",
             "Status": "Estado",
         })
         hourly_chart = (
@@ -5208,17 +5216,17 @@ def render_configuration_plan():
             .mark_rect()
             .encode(
                 x=alt.X(
-                    "Time slot:N",
-                    title="Time slot",
+                    "Intervalo horário:N",
+                    title="Horário",
                     sort=alt.SortField(
-                        field="Start do intervalo (min)",
+                        field="Início do intervalo (min)",
                         order="ascending",
                     ),
                 ),
-                y=alt.Y("Production date:N", title="Production date"),
+                y=alt.Y("Data de produção:N", title="Data de produção"),
                 color=alt.Color(
-                    "Operators used:Q",
-                    title="Operators used",
+                    "Operadores usados:Q",
+                    title="Operadores usados",
                     scale=alt.Scale(
                         domain=[0, max(1, time_slot_df["Total operators used"].max())],
                         range=["#f1f5f9", "#153e7e", "#b6003b"],
@@ -5230,39 +5238,39 @@ def render_configuration_plan():
         )
         st.altair_chart(hourly_chart, width="stretch")
     
-    st.subheader("Utilisation de capacity por linha")
+    st.subheader("Utilização de capacidade por linha")
     if capacity_df.empty:
-        st.info("No capacity utilisation data is available.")
+        st.info("Não existem dados de utilização de capacidade.")
     else:
         capacity_chart_df = capacity_df.rename(columns={
-            "Production date": "Production date",
-            "Day": "Day",
-            "Line": "Line",
-            "Shifts": "Shifts",
-            "Production time (min)": "Production time (min)",
-            "Setup time (min)": "Setup time (min)",
+            "Production date": "Data de produção",
+            "Day": "Dia",
+            "Line": "Linha",
+            "Shifts": "Turnos",
+            "Production time (min)": "Tempo de produção (min)",
+            "Setup time (min)": "Tempo de setup (min)",
             "Occupied time (min)": "Tempo ocupado (min)",
-            "Available time (min)": "Available time (min)",
-            "Capacity excess (min)": "Excesso de capacity (min)",
-            "Utilization (%)": "Utilisation (%)",
+            "Available time (min)": "Tempo disponível (min)",
+            "Capacity excess (min)": "Excesso de capacidade (min)",
+            "Utilization (%)": "Utilização (%)",
         })
         capacity_chart = build_capacity_utilization_chart(
             capacity_chart_df,
-            "Production date",
+            "Data de produção",
         )
         st.altair_chart(capacity_chart, width="stretch")
     
         capacity_display_df = capacity_df.rename(columns={
-            "Production date": "Production date",
-            "Day": "Day",
-            "Line": "Line",
-            "Shifts": "Shifts",
-            "Production time (min)": "Production time (min)",
-            "Setup time (min)": "Setup time (min)",
+            "Production date": "Data de produção",
+            "Day": "Dia",
+            "Line": "Linha",
+            "Shifts": "Turnos",
+            "Production time (min)": "Tempo de produção (min)",
+            "Setup time (min)": "Tempo de setup (min)",
             "Occupied time (min)": "Tempo ocupado (min)",
-            "Available time (min)": "Available time (min)",
-            "Capacity excess (min)": "Excesso de capacity (min)",
-            "Utilization (%)": "Utilisation (%)",
+            "Available time (min)": "Tempo disponível (min)",
+            "Capacity excess (min)": "Excesso de capacidade (min)",
+            "Utilization (%)": "Utilização (%)",
         })
         render_interactive_table(
             capacity_display_df,
@@ -5276,8 +5284,8 @@ def render_dynamic_replanning_tab():
 
     if context is None:
         st.info(
-            "Gere first um plano in the tab Plano de production. "
-            "Then you can return here to freeze past days or fix specific orders."
+            "Gere primeiro um plano no separador Plano de produção. "
+            "Depois pode voltar aqui para congelar dias anteriores ou fixar pedidos específicos."
         )
         return
 
@@ -5285,21 +5293,21 @@ def render_dynamic_replanning_tab():
     working_days = base_instance.get("working_days", [])
 
     if not working_days:
-        st.warning("The current plan has no working days defined.")
+        st.warning("O plano atual não tem dias úteis definidos.")
         return
 
-    st.subheader("Dynamic replanning")
+    st.subheader("Replaneamento dinâmico")
     st.caption(
-        "Use this tab when the plan is already being executed. "
-        "Days before the selected replanning date are locked and the GA reorganizes only the remaining horizon."
+        "Use esta aba quando o plano já está em execução. "
+        "Os dias anteriores à data de replaneamento ficam bloqueados e o GA reorganiza apenas o horizonte restante."
     )
 
     locked_orders = {}
 
     freeze_past = st.checkbox(
-        "Congelar dias earlieres",
+        "Congelar dias anteriores",
         value=True,
-        help="Keeps all orders scheduled before the replanning date unchanged.",
+        help="Mantém inalterados todos os pedidos planeados antes da data de replaneamento.",
     )
 
     if freeze_past:
@@ -5319,14 +5327,14 @@ def render_dynamic_replanning_tab():
         )
         locked_orders.update(frozen_orders)
         st.info(
-            f"{len(frozen_orders)} orders ficam congeladas before de "
+            f"{len(frozen_orders)} pedidos ficam congelados antes de "
             f"{format_date(replan_from_date)}."
         )
 
-    st.markdown("**Orders fixas manuais**")
+    st.markdown("**Pedidos fixos manuais**")
     st.caption(
-        "Assinale uma order, escolha the day fixo e opcionalmente the line. "
-        "Estas orders passam a ser hard constraints."
+        "Assinale um pedido, escolha o dia fixo e opcionalmente a linha. "
+        "Estes pedidos passam a ser restrições rígidas."
     )
 
     manual_constraint_df = build_manual_constraint_editor_df(base_instance)
@@ -5338,17 +5346,19 @@ def render_dynamic_replanning_tab():
         disabled=["Order", "order_id", "Reference", "Boxes"],
         column_config={
             "Fixar": st.column_config.CheckboxColumn("Fixar"),
-            "Order": st.column_config.TextColumn("Order"),
+            "Order": st.column_config.TextColumn("Pedido"),
             "order_id": None,
+            "Reference": st.column_config.TextColumn("Código"),
+            "Boxes": st.column_config.NumberColumn("Caixas", format="%d"),
             "Day fixo": st.column_config.DateColumn(
-                "Day fixo",
+                "Dia fixo",
                 min_value=working_days[0],
                 max_value=working_days[-1],
                 format="DD/MM/YYYY",
             ),
             "Fixed line": st.column_config.SelectboxColumn(
-                "Fixed line",
-                options=["Automatic"] + get_end_lines(base_instance),
+                "Linha fixa",
+                options=["Automático"] + get_end_lines(base_instance),
             ),
         },
         key="dynamic_manual_fixed_orders_editor",
@@ -5370,20 +5380,20 @@ def render_dynamic_replanning_tab():
 
     if frozen_conflicts:
         st.warning(
-            "Some orders already belong to the frozen period and were not manually changed: "
+            "Alguns pedidos já pertencem ao período congelado e não foram alterados manualmente: "
             + ", ".join(str(order_id) for order_id in frozen_conflicts)
         )
 
-    st.metric("Orders locked in this run", len(locked_orders))
+    st.metric("Pedidos bloqueados nesta corrida", len(locked_orders))
 
-    if st.button("Replan with constraints", type="primary", width="content"):
+    if st.button("Replanear com restrições", type="primary", width="content"):
         replanning_instance = deepcopy(base_instance)
 
         if locked_orders:
             replanning_instance["locked_orders"] = locked_orders
 
         try:
-            with st.spinner("Replanning while keeping the defined constraints..."):
+            with st.spinner("A replanear mantendo as restrições definidas..."):
                 replanned_solution, replanned_metrics, _actual_generations = run_genetic_algorithm(
                     replanning_instance,
                     population_size=POPULATION_SIZE,
@@ -5407,14 +5417,14 @@ def render_dynamic_replanning_tab():
                 st.session_state.get("scenario_version", 0) + 1
             )
             st.success(
-                "Plano rescheduled com sucesso. Veja o resultado currentizado na tab Plano de production."
+                "Plano replaneado com sucesso. Veja o resultado atualizado na aba Plano de produção."
             )
         except Exception as exc:
-            st.error(f"Could not replan: {exc}")
+            st.error(f"Não foi possível replanear: {exc}")
     
 plan_tab, scenarios_tab = st.tabs([
-    "Plano de production",
-    "Scenario analysis",
+    "Plano de produção",
+    "Análise de cenários",
 ])
 
 with plan_tab:
@@ -5425,8 +5435,8 @@ with scenarios_tab:
 
     if scenario_context is None:
         st.info(
-            "Generate the plan first in the Plano de production para "
-            "test demand and operator scenarios."
+            "Gere primeiro o plano na aba Plano de produção para "
+            "testar cenários de procura e operadores."
         )
     else:
         scenario_instance, scenario_solution, scenario_metrics = scenario_context
@@ -5435,5 +5445,4 @@ with scenarios_tab:
             scenario_solution,
             scenario_metrics,
         )
-
 
