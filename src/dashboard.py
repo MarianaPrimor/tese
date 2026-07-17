@@ -2346,7 +2346,7 @@ def render_automatic_scenario_analysis(instance, baseline_solution, baseline_met
     results = st.session_state.get("automatic_scenario_analysis")
 
     if results is None:
-        st.info("Click the button to generate the automatic-analysis charts and tables.")
+        st.info("Clique no botão para gerar os gráficos e tabelas da análise automática.")
         return
 
     render_automatic_scenario_results(results)
@@ -2403,8 +2403,8 @@ def render_weight_experiment(instance, baseline_metrics):
     ])
 
     st.caption(
-        f"Soma das priorities usadas no GA: {sum(weights.values()):.2f}. "
-        "Even if the sliders do not sum to 1, the algorithm always uses the normalised priorities."
+        f"Soma das prioridades usadas no GA: {sum(weights.values()):.2f}. "
+        "Mesmo que os sliders não somem 1, o algoritmo usa sempre as prioridades normalizadas."
     )
     st.dataframe(
         normalized_weight_df,
@@ -2412,7 +2412,7 @@ def render_weight_experiment(instance, baseline_metrics):
         hide_index=True,
     )
 
-    if st.button("Simulate priorities", width="content"):
+    if st.button("Simular prioridades", width="content"):
         scenario_instance = deepcopy(instance)
         _, scenario_metrics, _ = run_dashboard_ga_scenario(
             scenario_instance,
@@ -2425,7 +2425,7 @@ def render_weight_experiment(instance, baseline_metrics):
 
     if scenario_metrics is not None:
         st.caption(
-            "The comparison is made against the balanced priorities used in the baseline plan."
+            "A comparação é feita contra as prioridades equilibradas usadas no plano base."
         )
         comparison_df = build_what_if_comparison_df(
             baseline_metrics,
@@ -2439,7 +2439,7 @@ def render_weight_experiment(instance, baseline_metrics):
         render_baseline_scenario_bar_chart(
             baseline_metrics,
             scenario_metrics,
-            "Priorities: Balanced vs. Scenario",
+            "Prioridades: equilibrado vs. cenário",
         )
 
 
@@ -2448,25 +2448,25 @@ def render_scenario_weight_controls():
         "postponement": "Adiamento",
         "delay": "Atraso",
         "setup": "Setup",
-        "economic_value": "Economic value",
-        "capacity_utilisation": "Utilisation de capacity",
-        "operator_utilisation": "Utilisation de operators",
+        "economic_value": "Valor económico",
+        "capacity_utilisation": "Utilização de capacidade",
+        "operator_utilisation": "Utilização de operadores",
     }
 
-    with st.expander("Advanced objective-function parameters", expanded=False):
+    with st.expander("Parâmetros avançados da função objetivo", expanded=False):
         use_custom_weights = st.checkbox(
-            "Usar weights custom in this scenario",
+            "Usar pesos personalizados neste cenário",
             value=False,
             help=(
-                "If this option is not selected, the scenario uses the default weights "
-                "calibrated in the dissertation."
+                "Se esta opção não estiver selecionada, o cenário usa os pesos padrão "
+                "calibrados na dissertação."
             ),
             key="combined_scenario_use_custom_weights",
         )
 
         if not use_custom_weights:
             st.caption(
-                "Default weights in use: "
+                "Pesos padrão em uso: "
                 + ", ".join(
                     f"{weight_labels[key]}={value:.3f}"
                     for key, value in DEFAULT_NORMALISED_WEIGHTS.items()
@@ -2489,7 +2489,7 @@ def render_scenario_weight_controls():
 
         weights = normalize_dashboard_weights(raw_weights)
         st.caption(
-            "Values are automatically normalised to sum to 1. "
+            "Os valores são automaticamente normalizados para somarem 1. "
             f"Soma usada no GA: {sum(weights.values()):.2f}."
         )
         st.dataframe(
@@ -2693,8 +2693,8 @@ def render_immediate_demand_revenue_preview(edited_df, added_orders=None, instan
         total_value += calculate_added_orders_value(added_orders, instance)
 
     col1, col2 = st.columns(2)
-    col1.metric("Selected boxes", f"{total_boxes:,.0f}")
-    col2.metric("Demand economic value", f"EUR {total_value:,.0f}")
+    col1.metric("Caixas selecionadas", f"{total_boxes:,.0f}")
+    col2.metric("Valor económico da procura", f"EUR {total_value:,.0f}")
 
 
 def build_signature_status(solution):
@@ -2788,7 +2788,7 @@ def render_demand_experiment(instance, baseline_solution, baseline_metrics):
     render_baseline_scenario_bar_chart(
         baseline_metrics,
         scenario_metrics,
-        "Demand: Baseline vs. Scenario",
+        "Procura: base vs. cenário",
     )
 
     baseline_status = build_signature_status(baseline_solution)
@@ -3820,9 +3820,9 @@ def build_contribution_df(best_metrics):
         "postponement": "Adiamento",
         "delay": "Atraso",
         "setup": "Setup",
-        "economic_value": "Economic value",
-        "capacity_utilisation": "Utilisation de capacity",
-        "operator_utilisation": "Utilisation de operators",
+        "economic_value": "Valor económico",
+        "capacity_utilisation": "Utilização de capacidade",
+        "operator_utilisation": "Utilização de operadores",
     }
     rows = [
         {
