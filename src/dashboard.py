@@ -1,10 +1,12 @@
 import os
+import pickle
 import numbers
 import html
 import unicodedata
 from copy import deepcopy
+from pathlib import Path
 from io import BytesIO
-from datetime import date, time, timedelta
+from datetime import date, time, timedelta, datetime
 
 import altair as alt
 import openpyxl
@@ -52,6 +54,8 @@ EDD_HEURISTIC_RATIO = 0.15
 DEFAULT_OPERATORS = 20
 LUNCH_BREAK_MIN = 30
 SHIFT_GROSS_CAPACITY_MIN = 8 * 60
+SAVED_PLAN_PATH = Path(os.environ.get("STREAMLIT_SAVED_PLAN_PATH", "saved_plans/ultimo_plano.pkl"))
+SAVED_PLAN_VERSION = 1
 
 
 def get_end_lines(instance):
@@ -442,6 +446,86 @@ def build_instance_signature(instance):
     )
 
     return demand_signature, reference_signature, operating_signature
+
+def build_saved_plan_payload(instance, solution, metrics, planning_month=None):
+    saved_at = datetime.now().isoformat(timespec="seconds")
+    return {
+        "version": SAVED_PLAN_VERSION,
+        "saved_at": saved_at,
+        "planning_month": planning_month or get_planning_month(instance),
+        "instance": deepcopy(instance),
+        "solution": deepcopy(solution),
+        "metrics": deepcopy(metrics),
+        "instance_signature": build_instance_signature(instance),
+        "ga_parameters": {
+            "population_size": POPULATION_SIZE,
+            "generations": GENERATIONS,
+            "mutation_rate": MUTATION_RATE,
+            "elite_size": ELITE_SIZE,
+            "tournament_size": TOURNAMENT_SIZE,
+            "stagnation_k": STAGNATION_K,
+            "seed": RANDOM_SEED,
+            "edd_heuristic_ratio": EDD_HEURISTIC_RATIO,
+        },
+    }
+
+
+def save_plan_payload(payload):
+    try:
+        SAVED_PLAN_PATH.parent.mkdir(parents=True, exist_ok=True)
+        with SAVED_PLAN_PATH.open("wb") as saved_file:
+            pickle.dump(payload, saved_file)
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+
+def save_current_plan(instance, solution, metrics, planning_month=None):
+    payload = build_saved_plan_payload(instance, solution, metrics, planning_month)
+    return save_plan_payload(payload)
+
+
+def load_saved_plan_payload_from_disk():
+    if not SAVED_PLAN_PATH.exists():
+        return None
+
+    with SAVED_PLAN_PATH.open("rb") as saved_file:
+        return pickle.load(saved_file)
+
+
+def load_saved_plan_payload_from_upload(uploaded_file):
+    uploaded_file.seek(0)
+    return pickle.load(uploaded_file)
+
+
+def restore_saved_plan_payload(payload):
+    required_keys = ["instance", "solution", "metrics"]
+
+    if not isinstance(payload, dict) or not all(key in payload for key in required_keys):
+        raise ValueError("O ficheiro selecionado não contém um plano guardado válido.")
+
+    instance = deepcopy(payload["instance"])
+    solution = deepcopy(payload["solution"])
+    metrics = deepcopy(payload["metrics"])
+    planning_month = payload.get("planning_month") or get_planning_month(instance)
+
+    st.session_state["ga_solution"] = solution
+    st.session_state["ga_metrics"] = metrics
+    st.session_state["ga_instance"] = instance
+    st.session_state["ga_planning_month"] = planning_month
+    st.session_state["ga_instance_signature"] = payload.get(
+        "instance_signature",
+        build_instance_signature(instance),
+    )
+    st.session_state["scenario_results"] = {}
+    st.session_state.pop("capacity_what_if_instance", None)
+    st.session_state.pop("capacity_what_if_solution", None)
+    st.session_state.pop("capacity_what_if_metrics", None)
+    st.session_state.pop("capacity_what_if_input", None)
+    st.session_state.pop("baseline_signature", None)
+    st.session_state["scenario_version"] = st.session_state.get("scenario_version", 0) + 1
+
+    return planning_month
 
 
 def validate_solution_orders(solution, instance):
@@ -3247,6 +3331,14 @@ def render_combined_scenario_experiment(instance, baseline_solution, baseline_me
         st.session_state["combined_scenario_objective_weights"] = (
             scenario_objective_weights or dict(DEFAULT_NORMALISED_WEIGHTS)
         )
+        saved_ok, saved_error = save_current_plan(
+            scenario_instance,
+            scenario_solution,
+            scenario_metrics,
+            get_planning_month(scenario_instance),
+        )
+        if not saved_ok:
+            st.warning(f"O cenário foi simulado, mas não foi possível guardá-lo automaticamente: {saved_error}")
 
     scenario_metrics = st.session_state.get("combined_scenario_metrics")
     scenario_solution = st.session_state.get("combined_scenario_solution")
@@ -4834,7 +4926,61 @@ st.markdown(
 )
 
 
+
+def render_saved_plan_controls():
+    st.subheader("Plano guardado")
+    st.caption(
+        "Use esta secção para recuperar o último plano gerado ou importar um plano guardado anteriormente."
+    )
+
+    saved_plan_col1, saved_plan_col2 = st.columns([1, 1])
+
+    with saved_plan_col1:
+        if SAVED_PLAN_PATH.exists():
+            if st.button("Carregar último plano", width="content"):
+                try:
+                    payload = load_saved_plan_payload_from_disk()
+                    planning_month = restore_saved_plan_payload(payload)
+                    st.success(f"Plano guardado carregado para {planning_month}.")
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Não foi possível carregar o último plano: {exc}")
+        else:
+            st.info("Ainda não existe nenhum plano guardado automaticamente nesta app.")
+
+    with saved_plan_col2:
+        if SAVED_PLAN_PATH.exists():
+            try:
+                st.download_button(
+                    "Descarregar último plano",
+                    data=SAVED_PLAN_PATH.read_bytes(),
+                    file_name="ultimo_plano_guardado.pkl",
+                    mime="application/octet-stream",
+                    width="content",
+                )
+            except Exception as exc:
+                st.warning(f"Não foi possível preparar o download do plano guardado: {exc}")
+
+    uploaded_saved_plan = st.file_uploader(
+        "Importar plano guardado (.pkl)",
+        type=["pkl"],
+        accept_multiple_files=False,
+        key="saved_plan_upload",
+        help="Carregue um plano previamente descarregado para continuar o replaneamento noutra sessão.",
+    )
+
+    if uploaded_saved_plan is not None and st.button("Importar plano guardado", width="content"):
+        try:
+            payload = load_saved_plan_payload_from_upload(uploaded_saved_plan)
+            planning_month = restore_saved_plan_payload(payload)
+            st.success(f"Plano importado com sucesso para {planning_month}.")
+            st.rerun()
+        except Exception as exc:
+            st.error(f"Não foi possível importar o plano guardado: {exc}")
+
 def render_configuration_plan():
+    render_saved_plan_controls()
+    st.divider()
     st.subheader("Ficheiro de dados de entrada")
     st.caption("Carregue o ficheiro Excel mensal para iniciar o planeamento.")
     uploaded_excel = st.file_uploader(
@@ -4845,29 +4991,33 @@ def render_configuration_plan():
     )
 
     if uploaded_excel is None:
-        st.info("À espera de um ficheiro Excel. Arraste-o para a caixa acima ou clique para selecionar.")
-        return
+        if "ga_instance" in st.session_state:
+            base_instance = deepcopy(st.session_state["ga_instance"])
+            st.info("Plano guardado carregado. Pode visualizar o plano ou ajustar parâmetros antes de gerar novamente.")
+        else:
+            st.info("À espera de um ficheiro Excel. Arraste-o para a caixa acima ou clique para selecionar.")
+            return
+    else:
+        workbook_errors = validate_input_workbook(uploaded_excel)
 
-    workbook_errors = validate_input_workbook(uploaded_excel)
-
-    if workbook_errors:
-        st.error(
-            "O ficheiro carregado não corresponde ao modelo obrigatório."
-        )
-        for error in workbook_errors:
-            st.warning(error)
-        st.info(
-            "O ficheiro deve conter as folhas 2_REFERENCIAS, 3_SETUPS e 5_PROCURA. "
-            "A folha 5_PROCURA deve conter apenas as três colunas obrigatórias: "
-            "referência, caixas/quantidade e data de entrega."
-        )
-        return
-    
-    try:
-        base_instance = load_real_instance(uploaded_excel)
-    except Exception as exc:
-        st.error(f"Não foi possível carregar o ficheiro de entrada: {exc}")
-        return
+        if workbook_errors:
+            st.error(
+                "O ficheiro carregado não corresponde ao modelo obrigatório."
+            )
+            for error in workbook_errors:
+                st.warning(error)
+            st.info(
+                "O ficheiro deve conter as folhas 2_REFERENCIAS, 3_SETUPS e 5_PROCURA. "
+                "A folha 5_PROCURA deve conter apenas as três colunas obrigatórias: "
+                "referência, caixas/quantidade e data de entrega."
+            )
+            return
+        
+        try:
+            base_instance = load_real_instance(uploaded_excel)
+        except Exception as exc:
+            st.error(f"Não foi possível carregar o ficheiro de entrada: {exc}")
+            return
     
     default_working_days = base_instance.get("working_days", [])
     
@@ -5081,6 +5231,14 @@ def render_configuration_plan():
             st.session_state["scenario_version"] = (
                 st.session_state.get("scenario_version", 0) + 1
             )
+            saved_ok, saved_error = save_current_plan(
+                instance,
+                best_solution,
+                best_metrics,
+                planning_month,
+            )
+            if not saved_ok:
+                st.warning(f"O plano foi gerado, mas não foi possível guardá-lo automaticamente: {saved_error}")
         except Exception as exc:
             st.error(f"Não foi possível gerar o plano: {exc}")
             return
@@ -5416,6 +5574,14 @@ def render_dynamic_replanning_tab():
             st.session_state["scenario_version"] = (
                 st.session_state.get("scenario_version", 0) + 1
             )
+            saved_ok, saved_error = save_current_plan(
+                replanning_instance,
+                replanned_solution,
+                replanned_metrics,
+                get_planning_month(replanning_instance),
+            )
+            if not saved_ok:
+                st.warning(f"O plano foi replaneado, mas não foi possível guardá-lo automaticamente: {saved_error}")
             st.success(
                 "Plano replaneado com sucesso. Veja o resultado atualizado na aba Plano de produção."
             )
