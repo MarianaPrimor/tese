@@ -470,6 +470,24 @@ def build_saved_plan_payload(instance, solution, metrics, planning_month=None):
     }
 
 
+
+def build_saved_plan_payload_from_session():
+    required_keys = ["ga_instance", "ga_solution", "ga_metrics"]
+
+    if not all(key in st.session_state for key in required_keys):
+        return None
+
+    return build_saved_plan_payload(
+        st.session_state["ga_instance"],
+        st.session_state["ga_solution"],
+        st.session_state["ga_metrics"],
+        st.session_state.get("ga_planning_month"),
+    )
+
+
+def serialise_saved_plan_payload(payload):
+    return pickle.dumps(payload)
+
 def save_plan_payload(payload):
     try:
         SAVED_PLAN_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -4934,9 +4952,11 @@ def render_saved_plan_controls():
     )
 
     saved_plan_col1, saved_plan_col2 = st.columns([1, 1])
+    session_payload = build_saved_plan_payload_from_session()
+    disk_plan_exists = SAVED_PLAN_PATH.exists()
 
     with saved_plan_col1:
-        if SAVED_PLAN_PATH.exists():
+        if disk_plan_exists:
             if st.button("Carregar último plano", width="content"):
                 try:
                     payload = load_saved_plan_payload_from_disk()
@@ -4945,21 +4965,28 @@ def render_saved_plan_controls():
                     st.rerun()
                 except Exception as exc:
                     st.error(f"Não foi possível carregar o último plano: {exc}")
-        else:
+        elif session_payload is None:
             st.info("Ainda não existe nenhum plano guardado automaticamente nesta app.")
+        else:
+            st.success("Existe um plano ativo nesta sessão. Pode descarregá-lo para o guardar.")
 
     with saved_plan_col2:
-        if SAVED_PLAN_PATH.exists():
+        payload_to_download = session_payload
+
+        if payload_to_download is None and disk_plan_exists:
             try:
-                st.download_button(
-                    "Descarregar último plano",
-                    data=SAVED_PLAN_PATH.read_bytes(),
-                    file_name="ultimo_plano_guardado.pkl",
-                    mime="application/octet-stream",
-                    width="content",
-                )
+                payload_to_download = load_saved_plan_payload_from_disk()
             except Exception as exc:
-                st.warning(f"Não foi possível preparar o download do plano guardado: {exc}")
+                st.warning(f"Não foi possível preparar o plano guardado para download: {exc}")
+
+        if payload_to_download is not None:
+            st.download_button(
+                "Descarregar plano atual",
+                data=serialise_saved_plan_payload(payload_to_download),
+                file_name="plano_guardado.pkl",
+                mime="application/octet-stream",
+                width="content",
+            )
 
     uploaded_saved_plan = st.file_uploader(
         "Importar plano guardado (.pkl)",
@@ -5239,6 +5266,7 @@ def render_configuration_plan():
             )
             if not saved_ok:
                 st.warning(f"O plano foi gerado, mas não foi possível guardá-lo automaticamente: {saved_error}")
+            st.rerun()
         except Exception as exc:
             st.error(f"Não foi possível gerar o plano: {exc}")
             return
